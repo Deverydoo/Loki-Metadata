@@ -6,6 +6,7 @@ import QtQuick
 ThemeSpec {
     name: "Dark"
     dark: true
+    logo: Qt.resolvedUrl("../../images/logo.png")
 
     color: ColorTokens {
         window: "#111215"

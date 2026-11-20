@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/logo.png" width="520" alt="Loki Metadata"></p>
+
 # Loki Metadata
 
 Edit the tags and properties of music, video, pictures and documents, one
@@ -116,7 +118,7 @@ qpdf, zlib, libjpeg-turbo and dav1d; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NO
 ## Themes
 
 All styling lives in `app/qml/theme/`. Components read only `Theme.color.*`,
-`Theme.size.*` and `Theme.font.*`, and a test fails if any other QML file
+`Theme.size.*`, `Theme.font.*` and `Theme.logo`, and a test fails if any other QML file
 names a colour. To add a theme, copy `themes/DarkTheme.qml`, change the
 values, list it in `Theme.qml`'s `available` and in `app/CMakeLists.txt`,
 then set `Theme.name`.

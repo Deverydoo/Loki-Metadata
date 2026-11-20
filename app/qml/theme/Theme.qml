@@ -22,4 +22,5 @@ QtObject {
     readonly property ColorTokens color: current.color
     readonly property SizeTokens size: current.size
     readonly property FontTokens font: current.font
+    readonly property url logo: current.logo
 }

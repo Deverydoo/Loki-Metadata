@@ -17,13 +17,16 @@ Rectangle {
         anchors.rightMargin: Theme.size.padding
         spacing: Theme.size.gap
 
-        Text {
+        Image {
+            objectName: "headerLogo"
             Layout.rightMargin: Theme.size.padding
-            text: "Metadata"
-            color: Theme.color.text
-            font.family: Theme.font.family
-            font.pixelSize: Theme.font.title
-            font.weight: Theme.font.strong
+            Layout.preferredHeight: Theme.size.logoHeight
+            Layout.preferredWidth: Theme.size.logoHeight * (implicitHeight > 0 ? implicitWidth / implicitHeight : 3)
+            source: Theme.logo
+            fillMode: Image.PreserveAspectFit
+            smooth: true
+            mipmap: true
+            Accessible.name: "Loki Metadata"
         }
         AppButton {
             text: "Add files"

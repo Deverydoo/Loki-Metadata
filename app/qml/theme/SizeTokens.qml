@@ -18,6 +18,7 @@ QtObject {
     property int markerWidth: 3          // the bar beside a selected or edited row
 
     property int toolbarHeight: 56
+    property int logoHeight: 44          // the logo in the header
     property int statusHeight: 30
     property int buttonHeight: 32
     property int fieldHeight: 34

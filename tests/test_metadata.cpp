@@ -1255,6 +1255,11 @@ private slots:
             return found;
         };
 
+        QQuickItem* logo = find("headerLogo");
+        QVERIFY(logo);
+        QTRY_COMPARE(logo->property("status").toInt(), 1);   // Image.Ready: the theme's logo was found
+        QVERIFY(logo->width() > logo->height() * 2);
+
         // The list is sorted: page.jpg, page.mp3, page.mp4, page.png. The last
         // three share title and artist; select them and type a new title.
         e.click(1, 0);

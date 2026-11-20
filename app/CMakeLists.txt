@@ -88,6 +88,8 @@ qt_add_qml_module(metadata_ui
         qml/views/FieldRow.qml
         qml/views/DropOverlay.qml
         qml/views/CredentialsSection.qml
+    RESOURCES
+        qml/images/logo.png
 )
 
 configure_file(resources/LokiMetadata.rc.in ${CMAKE_CURRENT_BINARY_DIR}/LokiMetadata.rc @ONLY)
