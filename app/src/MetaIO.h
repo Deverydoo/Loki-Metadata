@@ -78,6 +78,8 @@ ReadResult readOffice(const QString& path);
 QString writeOffice(const QString& path, const QHash<QString, QString>& changes, QStringList* notStored);
 ReadResult readPdf(const QString& path);
 QString writePdf(const QString& path, const QHash<QString, QString>& changes, QStringList* notStored);
+ReadResult readFbx(const QString& path);
+QString writeFbx(const QString& path, const QHash<QString, QString>& changes, QStringList* notStored);
 QString writeJpeg(const QString& path, const QHash<QString, QString>& changes, QStringList* notStored);
 
 /// Files at least this big may be edited in place where a format allows it

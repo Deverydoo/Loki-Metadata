@@ -53,4 +53,6 @@ QtObject {
     property color imageSoft
     property color document
     property color documentSoft
+    property color model           // 3D models
+    property color modelSoft
 }

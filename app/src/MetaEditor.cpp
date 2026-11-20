@@ -4,6 +4,7 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QDirIterator>
+#include <QDirListing>
 #include <QElapsedTimer>
 #include <QFileInfo>
 #include <QMutexLocker>
@@ -63,6 +64,7 @@ static QString kindName(Kind k)
     case Kind::Video: return "video";
     case Kind::Image: return "image";
     case Kind::Document: return "document";
+    case Kind::Model: return "model";
     default: return "unknown";
     }
 }
@@ -152,15 +154,19 @@ QHash<int, QByteArray> FieldListModel::roleNames() const
             {AppliesToRole, "appliesTo"}, {TotalRole, "total"}};
 }
 
-FieldListModel::Row FieldListModel::compute(const QString& key) const
+FieldListModel::Row FieldListModel::compute(const QString& key) const { return compute(key, editor_->readySelection()); }
+
+FieldListModel::Row FieldListModel::compute(const QString& key, const QList<int>& sel) const
 {
     Row r{key, fieldLabel(key), {}, false, false, fieldMultiline(key)};
     bool first = true;
-    const QList<int> sel = editor_->readySelection();
     r.total = int(sel.size());
+    QHash<QString, bool> typeHolds;   // per extension: asked once, not once per file
     for (int i : sel) {
         const MetaFile& f = editor_->list_[i];
-        if (!holds(f, key)) continue;   // not its kind of field: it doesn't count
+        auto known = typeHolds.constFind(f.ext);
+        if (known == typeHolds.constEnd()) known = typeHolds.insert(f.ext, canHold(f.path, key));
+        if (!known.value() && !f.original(key)) continue;   // not its kind of field: it doesn't count
         ++r.appliesTo;
         const QString v = f.value(key).value_or(QString());
         if (first) r.value = v;
@@ -180,10 +186,13 @@ void FieldListModel::rebuild()
     if (!sel.isEmpty()) {
         // Every field the selected files' formats hold (empty or not), any
         // other field one of them has, and any custom one just added.
-        QSet<QString> keySet;
+        QSet<QString> keySet, typesSeen;
         for (int i : sel) {
             const MetaFile& f = editor_->list_[i];
+            if (!typesSeen.contains(f.ext)) {   // the fields of each type, once
+            typesSeen.insert(f.ext);
             for (const QString& k : fieldsFor(f.path)) keySet.insert(k);
+        }
             for (const auto& [k, v] : f.tags)
                 if (f.value(k).has_value()) keySet.insert(k);
             for (auto it = f.pending.begin(); it != f.pending.end(); ++it)
@@ -192,7 +201,7 @@ void FieldListModel::rebuild()
         for (const QString& k : editor_->extraKeys_) keySet.insert(k);
         QStringList keys(keySet.begin(), keySet.end());
         sortKeys(keys);
-        for (const QString& k : keys) rows_.append(compute(k));
+        for (const QString& k : keys) rows_.append(compute(k, sel));
     }
     endResetModel();
 }
@@ -320,14 +329,109 @@ void MetaEditor::say(const QString& text, const QString& kind)
 
 // --- Adding and loading ----------------------------------------------------------
 
+// What adding some paths would bring: the files, ready to insert. Pure, so
+// a big folder can be searched on another thread.
+struct MetaEditor::Scan {
+    QList<MetaFile> files;   // sorted by path, duplicates and all
+    int skipped = 0;         // named files of a type it can't edit
+    bool deeper = false;     // a folder with nothing at its top but files below
+};
+
+static MetaEditor::Scan scanPaths(const QStringList& paths, bool includeSubfolders)
+{
+    MetaEditor::Scan scan;
+    QStringList found;
+    const QStringList exts = supportedExtensions();
+    const QSet<QString> wanted(exts.begin(), exts.end());
+    // A file worth listing: a supported type, and not one of the "._" files
+    // macOS leaves in zip archives (resource forks, never the real thing).
+    auto wantedName = [&](const QString& name) {
+        if (name.startsWith("._")) return false;
+        const qsizetype dot = name.lastIndexOf('.');
+        return dot > 0 && wanted.contains(name.mid(dot + 1).toLower());
+    };
+    // QDirListing: no extra disk lookup per file, which matters over 100,000.
+    using F = QDirListing::IteratorFlag;
+    auto list = [&](const QString& dir, bool deep, bool firstOnly) {
+        QStringList out;
+        for (const auto& entry : QDirListing(dir, deep ? F::FilesOnly | F::Recursive : F::FilesOnly)) {
+            if (!wantedName(entry.fileName())) continue;
+            out.append(entry.filePath());
+            if (firstOnly) break;
+        }
+        return out;
+    };
+    for (const QString& p : paths) {
+        const QFileInfo fi(p);
+        if (fi.isDir()) {
+            const QStringList here = list(fi.absoluteFilePath(), includeSubfolders, false);
+            found += here;
+            if (!includeSubfolders && here.isEmpty()) scan.deeper = scan.deeper || !list(fi.absoluteFilePath(), true, true).isEmpty();
+        } else if (isSupported(p)) {
+            found.append(QDir::fromNativeSeparators(fi.absoluteFilePath()));
+        } else if (fi.exists()) {
+            ++scan.skipped;
+        }
+    }
+    std::sort(found.begin(), found.end(), [](const QString& a, const QString& b) { return a.compare(b, Qt::CaseInsensitive) < 0; });
+    scan.files.reserve(found.size());
+    for (const QString& p : found) {
+        if (p.contains(".runa-tmp.")) continue;
+        MetaFile f;
+        f.path = p;
+        const qsizetype slash = p.lastIndexOf('/');
+        f.name = p.mid(slash + 1);
+        f.folder = QDir::toNativeSeparators(p.left(slash));
+        f.badge = formatBadge(p);
+        f.kind = kindOf(p);
+        f.ext = f.name.mid(f.name.lastIndexOf('.') + 1).toLower();
+        scan.files.append(std::move(f));
+    }
+    return scan;
+}
+
 void MetaEditor::addUrls(const QVariantList& urls)
 {
     QStringList paths;
+    bool folders = false;
     for (const QVariant& u : urls) {
         const QUrl url = u.toUrl();
         paths.append(url.isLocalFile() ? url.toLocalFile() : u.toString());
+        folders = folders || QFileInfo(paths.last()).isDir();
     }
-    addPaths(paths);
+    if (!folders) {   // files named one by one: nothing to search
+        addPaths(paths);
+        return;
+    }
+    // Folders are searched on another thread: a big tree takes seconds, and
+    // the window keeps going meanwhile.
+    ++scanning_;
+    emit scanningChanged();
+    say("Looking for files...");
+    QPointer<MetaEditor> self(this);
+    const bool deep = includeSubfolders_;
+    QThread* worker = QThread::create([self, paths, deep] {
+        Scan scan = scanPaths(paths, deep);
+        QMetaObject::invokeMethod(QCoreApplication::instance(), [self, paths, scan = std::move(scan)]() mutable {
+            if (!self) return;
+            --self->scanning_;
+            emit self->scanningChanged();
+            self->addScanned(paths, std::move(scan));
+        }, Qt::QueuedConnection);
+    });
+    connect(worker, &QThread::finished, worker, &QObject::deleteLater);
+    worker->start();
+}
+
+bool MetaEditor::waitForScans(int ms)
+{
+    QElapsedTimer t;
+    t.start();
+    while (scanning_ > 0 && t.elapsed() < ms) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+        QThread::msleep(2);
+    }
+    return scanning_ == 0;
 }
 
 void MetaEditor::setIncludeSubfolders(bool on)
@@ -337,30 +441,13 @@ void MetaEditor::setIncludeSubfolders(bool on)
     emit includeSubfoldersChanged();
 }
 
-void MetaEditor::addPaths(const QStringList& paths)
-{
-    QStringList found;
-    int skipped = 0;
-    QStringList filters;
-    for (const QString& ext : supportedExtensions()) filters.append("*." + ext);
-    bool deeper = false;   // a folder with nothing in it but files in its subfolders
-    for (const QString& p : paths) {
-        const QFileInfo fi(p);
-        if (fi.isDir()) {
-            const qsizetype before = found.size();
-            QDirIterator it(fi.absoluteFilePath(), filters, QDir::Files,
-                            includeSubfolders_ ? QDirIterator::Subdirectories : QDirIterator::NoIteratorFlags);
-            while (it.hasNext()) found.append(it.next());
-            if (!includeSubfolders_ && found.size() == before)
-                deeper = deeper || QDirIterator(fi.absoluteFilePath(), filters, QDir::Files, QDirIterator::Subdirectories).hasNext();
-        } else if (isSupported(p)) {
-            found.append(QDir::fromNativeSeparators(fi.absoluteFilePath()));
-        } else if (fi.exists()) {
-            ++skipped;
-        }
-    }
-    std::sort(found.begin(), found.end(), [](const QString& a, const QString& b) { return a.compare(b, Qt::CaseInsensitive) < 0; });
+void MetaEditor::addPaths(const QStringList& paths) { addScanned(paths, scanPaths(paths, includeSubfolders_)); }
 
+void MetaEditor::addScanned(const QStringList& paths, Scan scan)
+{
+    const int skipped = scan.skipped;
+    const bool deeper = scan.deeper;
+    const bool foundAny = !scan.files.isEmpty();
     // Remembered for the next dialog: the folder added, or the files' folder.
     for (const QString& p : paths) {
         const QFileInfo fi(p);
@@ -370,17 +457,10 @@ void MetaEditor::addPaths(const QStringList& paths)
 
     QList<MetaFile> fresh;
     QSet<QString> seen;
-    for (const QString& p : found) {
-        const QString key = p.toLower();
-        if (rowOf_.contains(key) || seen.contains(key) || p.contains(".runa-tmp.")) continue;
+    for (MetaFile& f : scan.files) {
+        const QString key = f.path.toLower();
+        if (rowOf_.contains(key) || seen.contains(key)) continue;
         seen.insert(key);
-        MetaFile f;
-        f.path = p;
-        const qsizetype slash = p.lastIndexOf('/');
-        f.name = p.mid(slash + 1);
-        f.folder = QDir::toNativeSeparators(p.left(slash));
-        f.badge = formatBadge(p);
-        f.kind = kindOf(p);
         fresh.append(std::move(f));
     }
     const int added = int(fresh.size());
@@ -403,12 +483,12 @@ void MetaEditor::addPaths(const QStringList& paths)
         files_.rowChanged(0);
         selectionDidChange();
     }
-    if (!added && found.isEmpty() && deeper)
+    if (!added && !foundAny && deeper)
         say("Nothing to add in that folder itself, but its subfolders have files. Tick Include subfolders to add them.",
             "warning");
-    else if (!added && found.isEmpty() && (skipped || !paths.isEmpty()))
-        say("Nothing to add: these aren't files it can edit (music, video, pictures, Office documents or PDFs).", "warning");
-    else if (!added && !found.isEmpty())
+    else if (!added && !foundAny && (skipped || !paths.isEmpty()))
+        say("Nothing to add: these aren't files it can edit (music, video, pictures, documents or FBX models).", "warning");
+    else if (!added && foundAny)
         say("Those files are already in the list.");
     else if (skipped)
         say(QString("Added %1. Skipped %2 that aren't a supported type.").arg(added).arg(skipped));

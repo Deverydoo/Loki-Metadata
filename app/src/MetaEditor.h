@@ -27,7 +27,7 @@ class QThreadPool;
 struct MetaFile {
     enum State { Loading, Ready, Failed, Saving };
 
-    QString path, name, folder, badge;
+    QString path, name, folder, badge, ext;   // ext: lower case
     meta::Kind kind = meta::Kind::Unknown;
     State state = Loading;
     QString error;     // couldn't be read, or the last save failed
@@ -84,6 +84,7 @@ private:
         bool mixed = false, edited = false, multiline = false;
         int appliesTo = 0, total = 0;   // selected files that can hold it, of all selected
     };
+    Row compute(const QString& key, const QList<int>& sel) const;
     Row compute(const QString& key) const;
     void rebuild();
     void refresh(const QString& key);
@@ -107,6 +108,7 @@ class MetaEditor : public QObject {
     Q_PROPERTY(int credentialsDropping READ credentialsDropping NOTIFY currentChanged)
     Q_PROPERTY(int loadingCount READ loadingCount NOTIFY countChanged)
     Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
+    Q_PROPERTY(bool scanning READ scanning NOTIFY scanningChanged)   // looking through added folders
     // Whether an added folder's subfolders are searched too (Add folder and
     // folders dropped on the window). Off by default; the app remembers it.
     Q_PROPERTY(bool includeSubfolders READ includeSubfolders WRITE setIncludeSubfolders NOTIFY includeSubfoldersChanged)
@@ -139,6 +141,8 @@ public:
     int credentialsDropping() const;
     int loadingCount() const;
     bool busy() const { return busy_; }
+    bool scanning() const { return scanning_ > 0; }
+    struct Scan;
     bool includeSubfolders() const { return includeSubfolders_; }
     void setIncludeSubfolders(bool on);
     QString lastFolder() const { return lastFolder_; }
@@ -150,9 +154,11 @@ public:
     QString messageKind() const { return messageKind_; }
 
     /// Files and folders (a folder's subfolders too, with includeSubfolders).
-    /// Unsupported files and ones already in the list are skipped.
+    /// Unsupported files and ones already in the list are skipped. addUrls
+    /// searches folders on another thread (see scanning); addPaths at once.
     Q_INVOKABLE void addUrls(const QVariantList& urls);
     void addPaths(const QStringList& paths);
+    bool waitForScans(int ms);   // for tests
 
     // Selection, as in Explorer: Ctrl toggles, Shift extends from the last click.
     Q_INVOKABLE void click(int row, int modifiers);
@@ -188,6 +194,7 @@ signals:
     void currentChanged();
     void modifiedChanged();
     void busyChanged();
+    void scanningChanged();
     void includeSubfoldersChanged();
     void lastFolderChanged();
     void progressChanged();
@@ -199,6 +206,7 @@ private:
 
     int indexOf(const QString& path) const;
     void rebuildIndex();
+    void addScanned(const QStringList& paths, Scan scan);
     void startRead(const QString& path);
     void takeReads();           // the reads finished so far, into the list
     void checkShownCredentials();   // the hash check for the one file on show
@@ -227,6 +235,7 @@ private:
     // UI thread in batches rather than one event (and one redraw) each.
     QHash<QString, int> rowOf_;   // lower-case path -> row
     int loading_ = 0;
+    int scanning_ = 0;
     QMutex readsMutex_;
     QList<QPair<QString, meta::ReadResult>> reads_;   // finished, not yet taken (readsMutex_)
     bool takeQueued_ = false;                         // (readsMutex_)

@@ -51,8 +51,8 @@ Rectangle {
             font.pixelSize: Theme.font.small
         }
         Text {
-            visible: editor.loadingCount > 0
-            text: "Reading " + editor.loadingCount + "..."
+            visible: editor.loadingCount > 0 || editor.scanning
+            text: editor.loadingCount > 0 ? "Reading " + editor.loadingCount + "..." : "Looking for files..."
             color: Theme.color.textFaint
             font.family: Theme.font.family
             font.pixelSize: Theme.font.small

@@ -83,11 +83,12 @@ Item {
         title: "Add files"
         fileMode: FileDialog.OpenFiles
         nameFilters: [
-            "Everything it can edit (*.mp3 *.wav *.flac *.ogg *.oga *.opus *.aif *.aiff *.aifc *.m4a *.mp4 *.m4v *.mov *.mkv *.webm *.avi *.png *.jpg *.jpeg *.webp *.docx *.xlsx *.pptx *.odt *.ods *.odp *.pdf)",
+            "Everything it can edit (*.mp3 *.wav *.flac *.ogg *.oga *.opus *.aif *.aiff *.aifc *.m4a *.mp4 *.m4v *.mov *.mkv *.webm *.avi *.png *.jpg *.jpeg *.webp *.docx *.xlsx *.pptx *.odt *.ods *.odp *.pdf *.fbx)",
             "Audio (*.mp3 *.wav *.flac *.ogg *.oga *.opus *.aif *.aiff *.aifc *.m4a)",
             "Video (*.mp4 *.m4v *.mov *.mkv *.webm *.avi)",
             "Images (*.png *.jpg *.jpeg *.webp)",
-            "Documents (*.docx *.xlsx *.pptx *.odt *.ods *.odp *.pdf)"
+            "Documents (*.docx *.xlsx *.pptx *.odt *.ods *.odp *.pdf)",
+            "3D models (*.fbx)"
         ]
         currentFolder: editor.lastFolderUrl   // where files were last added from
         onAccepted: editor.addUrls(selectedFiles)

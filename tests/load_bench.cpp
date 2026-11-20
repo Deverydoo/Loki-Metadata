@@ -77,7 +77,8 @@ int main(int argc, char** argv)
     t.start();
     beat.start();
     heart.start();
-    editor.addPaths({args[0]});
+    editor.addUrls({QUrl::fromLocalFile(args[0])});   // as the window does: folders searched off the UI thread
+    while (editor.scanning()) QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
     const qint64 added = t.elapsed();
     const int count = editor.count();
     int lastReport = -1;
@@ -119,7 +120,7 @@ int main(int argc, char** argv)
     PROCESS_MEMORY_COUNTERS pm{};
     GetProcessMemoryInfo(GetCurrentProcess(), &pm, sizeof pm);
     std::printf("files %d (failed %d, with credentials %d)%s\n", count, failed, withCr, ui ? ", page drawn" : "");
-    std::printf("addPaths %lld ms, all read %.1f s, select all %lld ms\n", added, loaded / 1000.0, selectAll);
+    std::printf("add (search + insert) %lld ms, all read %.1f s, select all %lld ms\n", added, loaded / 1000.0, selectAll);
     if (applied >= 0) std::printf("apply %.1f s\n", applied / 1000.0);
     std::printf("UI thread: longest stall %lld ms, %lld stalls over 100 ms\n", worst, slow);
     std::printf("memory: peak %.1f MB, now %.1f MB\n", mb(pm.PeakWorkingSetSize), mb(pm.WorkingSetSize));

@@ -91,6 +91,7 @@ bool isJpeg(const QString& p) { return is(p, {"jpg", "jpeg"}); }
 bool isWebp(const QString& p) { return is(p, {"webp"}); }
 bool isOffice(const QString& p) { return is(p, {"docx", "xlsx", "pptx", "odt", "ods", "odp"}); }
 bool isPdf(const QString& p) { return is(p, {"pdf"}); }
+bool isFbx(const QString& p) { return is(p, {"fbx"}); }
 bool isMp3(const QString& p) { return is(p, {"mp3"}); }
 bool isWav(const QString& p) { return is(p, {"wav"}); }
 bool isFlac(const QString& p) { return is(p, {"flac"}); }
@@ -143,6 +144,7 @@ ReadResult read(const QString& path)
     else if (isWebp(path)) r = readWebp(path);
     else if (isOffice(path)) r = readOffice(path);
     else if (isPdf(path)) r = readPdf(path);
+    else if (isFbx(path)) r = readFbx(path);
     else r = readMedia(path);
     if (r.ok)   // FFmpeg for the facts; the tags read directly where this app writes them
         if (const auto tags = nativeTags(path)) r.tags = *tags;
@@ -208,6 +210,7 @@ static WriteResult writeFitting(const QString& path, const QHash<QString, QStrin
     else if (isWebp(path)) w.error = writeWebp(path, changes, &refused);
     else if (isOffice(path)) w.error = writeOffice(path, changes, &refused);
     else if (isPdf(path)) w.error = writePdf(path, changes, &refused);
+    else if (isFbx(path)) w.error = writeFbx(path, changes, &refused);
     else if (const auto direct = nativeWrite(path, changes, &refused)) w.error = *direct;
     else w.error = writeMedia(path, changes);
     if (!w.error.isEmpty()) return w;

@@ -115,6 +115,7 @@ static QStringList fieldsForExt(const QString& ext)
                 "language"};
     if (ext == "odt" || ext == "ods" || ext == "odp") return {"title", "subject", "artist", "keywords", "comment", "copyright", "language"};
     if (ext == "pdf") return {"title", "artist", "subject", "keywords", "copyright", "encoder"};
+    if (ext == "fbx") return {"title", "subject", "artist", "keywords", "comment", "copyright"};   // SceneInfo
     if (ext == "png") return {"title", "artist", "description", "comment", "keywords", "copyright", "date", "encoder"};
     if (ext == "jpg" || ext == "jpeg" || ext == "webp")
         return {"title", "rating", "artist", "subject", "description", "comment", "keywords", "copyright", "date", "encoder",
@@ -166,7 +167,8 @@ static bool canHoldExt(const QString& ext, const QString& key)
     }
     // Formats that take fields of your own.
     static const QStringList freeForm{"mp3", "mkv", "webm", "png", "flac", "ogg", "oga", "opus", "aif", "aiff", "aifc",
-                                      "m4a", "mp4", "m4v", "mov", "docx", "xlsx", "pptx", "odt", "ods", "odp", "pdf"};
+                                      "m4a", "mp4", "m4v", "mov", "docx", "xlsx", "pptx", "odt", "ods", "odp", "pdf",
+                                      "fbx"};
     return freeForm.contains(ext);
 }
 
@@ -175,7 +177,8 @@ QStringList supportedExtensions()
     return {"mp3", "wav", "flac", "ogg", "oga", "opus", "aif", "aiff", "aifc", "m4a",   // audio
             "mp4", "m4v", "mov", "mkv", "webm", "avi",                                // video
             "png", "jpg", "jpeg", "webp",                                             // images
-            "docx", "xlsx", "pptx", "odt", "ods", "odp", "pdf"};                      // documents
+            "docx", "xlsx", "pptx", "odt", "ods", "odp", "pdf",                       // documents
+            "fbx"};                                                                   // 3D models
 }
 
 Kind kindOf(const QString& path)
@@ -187,6 +190,7 @@ Kind kindOf(const QString& path)
     if (audio.contains(ext)) return Kind::Audio;
     if (image.contains(ext)) return Kind::Image;
     if (document.contains(ext)) return Kind::Document;
+    if (ext == "fbx") return Kind::Model;
     if (supportedExtensions().contains(ext)) return Kind::Video;
     return Kind::Unknown;
 }

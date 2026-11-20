@@ -5,16 +5,18 @@ import LokiMetadata
 Rectangle {
     id: badge
     property string text
-    property string kind   // audio, video, image or document
+    property string kind   // audio, video, image, document or model
 
     readonly property color tint: kind === "audio" ? Theme.color.audio : kind === "video" ? Theme.color.video
-                              : kind === "document" ? Theme.color.document : Theme.color.image
+                              : kind === "document" ? Theme.color.document : kind === "model" ? Theme.color.model
+                              : Theme.color.image
 
     implicitWidth: Theme.size.badgeWidth
     implicitHeight: Theme.size.badgeHeight
     radius: Theme.size.radiusSmall
     color: kind === "audio" ? Theme.color.audioSoft : kind === "video" ? Theme.color.videoSoft
-         : kind === "document" ? Theme.color.documentSoft : Theme.color.imageSoft
+         : kind === "document" ? Theme.color.documentSoft : kind === "model" ? Theme.color.modelSoft
+         : Theme.color.imageSoft
 
     Text {
         anchors.centerIn: parent

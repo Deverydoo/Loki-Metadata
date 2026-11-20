@@ -25,6 +25,7 @@ qt_add_library(metadata_ui STATIC
     src/Zip.cpp
     src/OfficeMeta.cpp
     src/PdfMeta.cpp
+    src/FbxMeta.cpp
     src/Xmp.h
     src/Xmp.cpp
     src/MetaEditor.h

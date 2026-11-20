@@ -254,6 +254,33 @@ static QByteArray entryOf(const QString& path, const QByteArray& name)
     return zip::extract(f, *a->find(name)).value_or(QByteArray());
 }
 
+// A binary FBX's nodes outside FBXHeaderExtension, each as its path and
+// property bytes, and what follows the last node (the footer).
+static QStringList fbxBody(const QByteArray& b, QByteArray* footer = nullptr)
+{
+    const quint32 version = qFromLittleEndian<quint32>(b.constData() + 23);
+    const bool wide = version >= 7500;
+    const int hs = wide ? 25 : 13;
+    QStringList out;
+    std::function<qsizetype(qsizetype, qsizetype, const QString&)> walk = [&](qsizetype pos, qsizetype end, const QString& path) {
+        while (pos + hs <= end) {
+            const qint64 e = wide ? qint64(qFromLittleEndian<quint64>(b.constData() + pos)) : qFromLittleEndian<quint32>(b.constData() + pos);
+            if (e == 0) return pos + hs;
+            const qint64 pl = wide ? qint64(qFromLittleEndian<quint64>(b.constData() + pos + 16)) : qFromLittleEndian<quint32>(b.constData() + pos + 8);
+            const int nl = quint8(b[pos + hs - 1]);
+            const QString name = path + "/" + QString::fromLatin1(b.mid(pos + hs, nl));
+            if (!name.startsWith("/FBXHeaderExtension")) out.append(name + " " + QString::fromLatin1(b.mid(pos + hs + nl, pl).toHex()));
+            const qsizetype kids = pos + hs + nl + pl;
+            if (kids < e) walk(kids, e, name);
+            pos = e;
+        }
+        return pos;
+    };
+    const qsizetype stop = walk(27, b.size(), {});
+    if (footer) *footer = b.mid(stop);
+    return out;
+}
+
 class TestMetadata : public QObject {
     Q_OBJECT
 
@@ -1003,23 +1030,28 @@ private slots:
         MetaEditor e;
         QVERIFY(!e.includeSubfolders());   // off unless asked
         e.addUrls({QUrl::fromLocalFile(dir.path())});
+        QVERIFY(e.waitForScans(20000));
         QCOMPARE(e.count(), 1);            // b.png; not sub/a.wav
         e.setIncludeSubfolders(true);
         e.addUrls({QUrl::fromLocalFile(dir.path())});
+        QVERIFY(e.waitForScans(20000));
         QCOMPARE(e.count(), 2);            // now sub/a.wav too, and b.png not twice
         e.addUrls({QUrl::fromLocalFile(dir.filePath("b.png"))});   // already there
+        QVERIFY(e.waitForScans(20000));
         QCOMPARE(e.count(), 2);
         QVERIFY(e.waitForLoads(10000));
 
         // A folder with nothing at its top but files below says how to get them.
         MetaEditor f;
         f.addUrls({QUrl::fromLocalFile(dir.filePath("sub/.."))});
+        QVERIFY(f.waitForScans(20000));
         QCOMPARE(f.count(), 1);
         MetaEditor g;
         QTemporaryDir deep;
         QDir(deep.path()).mkpath("a/b");
         QFile::copy(samples_.filePath("sample.wav"), deep.filePath("a/b/c.wav"));
         g.addUrls({QUrl::fromLocalFile(deep.path())});
+        QVERIFY(g.waitForScans(20000));
         QCOMPARE(g.count(), 0);
         QVERIFY(g.message().contains("Include subfolders"));
         QCOMPARE(g.messageKind(), QString("warning"));
@@ -1040,10 +1072,12 @@ private slots:
         QElapsedTimer t;
         t.start();
         e.addUrls({QUrl::fromLocalFile(dir.path())});
+        QVERIFY(e.waitForScans(20000));
         const qint64 adding = t.elapsed();
         QCOMPARE(e.count(), n);
         QVERIFY2(adding < 1500, qPrintable(QString("adding %1 files took %2 ms").arg(n).arg(adding)));
         e.addUrls({QUrl::fromLocalFile(dir.path())});   // all already there
+        QVERIFY(e.waitForScans(20000));
         QCOMPARE(e.count(), n);
         QVERIFY(e.waitForLoads(60000));
         QCOMPARE(e.loadingCount(), 0);
@@ -1072,6 +1106,7 @@ private slots:
         for (int i = 0; i < 400; ++i) QVERIFY(QFile::copy(samples_.filePath("sample.mp3"), dir.filePath(QString("r%1.mp3").arg(i))));
         MetaEditor e;
         e.addUrls({QUrl::fromLocalFile(dir.path())});
+        QVERIFY(e.waitForScans(20000));
         e.selectAll();
         e.removeSelected();
         QCOMPARE(e.count(), 0);
@@ -1079,6 +1114,7 @@ private slots:
         QTest::qWait(300);   // the reads that were under way come back to nothing
         QCOMPARE(e.loadingCount(), 0);
         e.addUrls({QUrl::fromLocalFile(dir.path())});
+        QVERIFY(e.waitForScans(20000));
         QVERIFY(e.waitForLoads(20000));
         QCOMPARE(e.count(), 400);
     }
@@ -1091,9 +1127,11 @@ private slots:
         MetaEditor e;
         QVERIFY(e.lastFolderUrl().isEmpty());
         e.addUrls({QUrl::fromLocalFile(dir.filePath("albums/one"))});
+        QVERIFY(e.waitForScans(20000));
         QCOMPARE(e.lastFolderUrl(), QUrl::fromLocalFile(dir.filePath("albums/one")));
         QCOMPARE(e.lastFolderParentUrl(), QUrl::fromLocalFile(dir.filePath("albums")));   // the picker opens beside it
         e.addUrls({QUrl::fromLocalFile(samples_.filePath("sample.png"))});   // files: their folder
+        QVERIFY(e.waitForScans(20000));
         QCOMPARE(e.lastFolderUrl(), QUrl::fromLocalFile(samples_.path()));
         e.setLastFolder(dir.filePath("gone"));   // a folder that's not there: the dialog's own default
         QVERIFY(e.lastFolderUrl().isEmpty());
@@ -1186,6 +1224,132 @@ private slots:
         // Nothing left: removing again is fine and changes nothing.
         QVERIFY(meta::write(path, {}, true).ok);
         QCOMPARE(fileBytes(path), after);
+    }
+
+    // --- FBX ----------------------------------------------------------------------
+
+    void fbx_data()
+    {
+        QTest::addColumn<QString>("file");
+        QTest::addColumn<QString>("format");
+        QTest::newRow("binary 7.4 (Blender)") << "cube_7400.fbx" << "FBX 7.4 (binary)";
+        QTest::newRow("binary 7.5 (wide offsets)") << "cube_7500.fbx" << "FBX 7.5 (binary)";
+        QTest::newRow("text") << "cube_ascii.fbx" << "FBX 7.5.0 (text)";
+    }
+
+    // The document info written, read back, changed and removed; everything
+    // else in the file (geometry, objects, footer; the other lines of a text
+    // file) stays exactly as it was.
+    void fbx()
+    {
+        QFETCH(QString, file);
+        QFETCH(QString, format);
+        const QString path = work_.filePath("model_" + file);
+        QFile::remove(path);
+        QVERIFY(QFile::copy(QString(SOURCE_DIR) + "/tests/data/" + file, path));
+        QFile::setPermissions(path, QFile::ReadOwner | QFile::WriteOwner);
+        const QByteArray before = fileBytes(path);
+        const bool text = file.contains("ascii");
+        QByteArray footer;
+        const QStringList body = text ? QStringList() : fbxBody(before, &footer);
+
+        ReadResult r = meta::read(path);
+        QVERIFY2(r.ok, qPrintable(r.error));
+        QCOMPARE(infoOf(r.info, "Format"), format);
+        QVERIFY(!infoOf(r.info, "Contents").isEmpty());
+        QCOMPARE(kindOf(path), Kind::Model);
+        QCOMPARE(formatBadge(path), QString("FBX"));
+
+        const QHash<QString, QString> changes{{"title", "Crimson Clockwork"},
+                                              {"subject", "A clockwork knight"},
+                                              {"artist", "Einar Blackstone"},
+                                              {"keywords", "knight, clockwork, Nine Winds"},
+                                              {"comment", "Pose 3, \"battle ready\""},
+                                              {"copyright", "2026 Blood&Loot Entertainment"},
+                                              {"world", "Nine Winds"}};
+        WriteResult w = meta::write(path, changes);
+        QVERIFY2(w.ok, qPrintable(w.error));
+        QVERIFY2(w.notStored.isEmpty(), qPrintable(w.notStored.join(", ")));
+        for (auto it = changes.begin(); it != changes.end(); ++it) QCOMPARE(tagOf(w.after.tags, it.key()), it.value());
+
+        auto unchangedOutsideTheHeader = [&] {
+            const QByteArray now = fileBytes(path);
+            if (!text) {
+                QByteArray footerNow;
+                return fbxBody(now, &footerNow) == body && footerNow == footer;
+            }
+            // Text: the lines outside SceneInfo are the same, line endings too.
+            auto outside = [](const QByteArray& t) {
+                const qsizetype a = t.indexOf("SceneInfo:"), b = t.indexOf("GlobalSettings:");
+                return t.left(a) + t.mid(b);
+            };
+            return outside(now) == outside(before) && !now.contains(QByteArray("\"\n")) && now.count("\r\n") >= before.count("\r\n");
+        };
+        QVERIFY(unchangedOutsideTheHeader());
+
+        // Changed again, and some removed.
+        w = meta::write(path, {{"title", "Crimson Clockwork II"}, {"copyright", ""}, {"world", ""}, {"comment", ""}});
+        QVERIFY2(w.ok, qPrintable(w.error));
+        QCOMPARE(tagOf(w.after.tags, "title"), QString("Crimson Clockwork II"));
+        QVERIFY(!hasTag(w.after.tags, "copyright"));
+        QVERIFY(!hasTag(w.after.tags, "world"));
+        QVERIFY(!hasTag(w.after.tags, "comment"));
+        QCOMPARE(tagOf(w.after.tags, "artist"), QString("Einar Blackstone"));
+        QVERIFY(!fileBytes(path).contains("Blood&Loot"));
+        QVERIFY(unchangedOutsideTheHeader());
+
+        // A field FBX has no place for is refused, not written.
+        w = meta::write(path, {{"album", "Nope"}});
+        QVERIFY(w.notStored.contains("album"));
+    }
+
+    // FBX files alongside music: each gets only the fields it can hold.
+    void fbxInABulkEdit()
+    {
+        const QString model = work_.filePath("bulk_model.fbx");
+        QFile::remove(model);
+        QVERIFY(QFile::copy(QString(SOURCE_DIR) + "/tests/data/cube_7400.fbx", model));
+        QFile::setPermissions(model, QFile::ReadOwner | QFile::WriteOwner);
+        MetaEditor e;
+        e.addPaths({model, copy("sample.mp3", "bulk_song.mp3")});
+        QVERIFY(e.waitForLoads(10000));
+        QCOMPARE(e.files()->data(e.files()->index(0), FileListModel::KindRole).toString(), QString("model"));
+        e.selectAll();
+        e.setField("copyright", "2026 Blood&Loot Entertainment");
+        e.setField("album", "Nine Winds OST");   // the MP3 only
+        e.apply();
+        QVERIFY(e.waitForApply(20000));
+        QCOMPARE(e.messageKind(), QString("success"));
+        QCOMPARE(tagOf(meta::read(model).tags, "copyright"), QString("2026 Blood&Loot Entertainment"));
+        QVERIFY(!hasTag(meta::read(model).tags, "album"));
+        QCOMPARE(tagOf(meta::read(e.list()[1].path).tags, "album"), QString("Nine Winds OST"));
+    }
+
+    // A damaged binary FBX is refused with a reason, and left as it was.
+    void damagedFbx()
+    {
+        QByteArray b = fileBytes(QString(SOURCE_DIR) + "/tests/data/cube_7400.fbx");
+        const QString path = work_.filePath("damaged.fbx");
+        auto save = [&](const QByteArray& bytes) {
+            QFile f(path);
+            return f.open(QIODevice::WriteOnly | QIODevice::Truncate) && f.write(bytes) == bytes.size();
+        };
+        // A node in the body that claims to end past the file.
+        QByteArray broken = b;
+        const qsizetype objects = broken.indexOf("Objects");
+        QVERIFY(objects > 13);
+        qToLittleEndian<quint32>(quint32(broken.size() + 1000), broken.data() + objects - 13);
+        QVERIFY(save(broken));
+        QVERIFY(meta::read(path).ok);   // the header still reads
+        const WriteResult w = meta::write(path, {{"title", "x"}});
+        QVERIFY(!w.ok);
+        QCOMPARE(fileBytes(path), broken);
+        // Cut short anywhere: never a crash.
+        for (qsizetype n = 0; n < b.size(); n += 97) {
+            QVERIFY(save(b.left(n)));
+            meta::read(path);
+            meta::write(path, {{"title", "x"}});
+        }
     }
 
     // Big MP4s with the moov at the end are edited without copying the media:

@@ -10,7 +10,7 @@
 
 namespace meta {
 
-enum class Kind { Audio, Video, Image, Document, Unknown };
+enum class Kind { Audio, Video, Image, Document, Model, Unknown };
 
 struct FieldDef {
     QString key;

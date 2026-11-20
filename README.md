@@ -2,8 +2,8 @@
 
 # Loki Metadata
 
-Edit the tags and properties of music, video, pictures and documents, one
-file at a time or many at once. For Windows 10 and 11 (64-bit).
+Edit the tags and properties of music, video, pictures, documents and FBX
+3D models, one file at a time or many at once. For Windows 10 and 11 (64-bit).
 
 **Download:** [the latest release](https://github.com/Deverydoo/Loki-Metadata/releases/latest):
 the installer (`LokiMetadata-<version>-Setup.exe`), or the portable zip
@@ -12,8 +12,8 @@ the installer (`LokiMetadata-<version>-Setup.exe`), or the portable zip
 - Drop files or folders on the window, or use **Add files** / **Add folder**.
   Tick **Include subfolders** to add the files in a folder's subfolders too.
   Both dialogs open where you last added from; both choices are remembered.
-  Thousands of files at once are fine (20,000 small files are listed and read
-  in under a second).
+  Thousands of files at once are fine: folders are searched in the
+  background, and 20,000 small files are listed and read in under a second.
 - Click a file to see every field its type can hold, filled in or not.
   Ctrl-click, Shift-click or Ctrl+A to select several: every field any of
   them can hold is shown. Where the values differ the box says "Different
@@ -55,6 +55,7 @@ packet before and after).
 | Word, Excel, PowerPoint | docProps/core.xml, app.xml and custom.xml (copyright and your own fields) inside the zip; every other entry copied byte for byte. |
 | OpenDocument | meta.xml inside the zip (mimetype stays first and stored). |
 | PDF | The information dictionary and XMP, through qpdf; signed PDFs are refused. |
+| FBX (binary 7.x and text) | The document info in FBXHeaderExtension/SceneInfo: title, subject, author, keywords and comment in its MetaData; copyright and your own fields as user properties. Binary files have every later node's end offset moved, and geometry, animation and footer copied byte for byte (checked against Blender's importer). FBX 6.1 files are read but have no document info to write to. Folders searched skip macOS `._` leftovers. |
 
 ### Content Credentials
 
@@ -79,6 +80,7 @@ FLAC everything but rating; MP4/M4A/MOV everything but copyright;
 OGG/Opus everything but copyright and rating; JPG everything; Word title,
 author, comment and keywords. Windows 10 reads nothing from WAV, AIFF, PNG,
 ODT or PDF files (other programs do), and only the copyright from WebP.
+Windows has no reader for FBX at all; FBX tools and the FBX SDK read it.
 
 ## Building
 
