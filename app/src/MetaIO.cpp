@@ -1,4 +1,5 @@
 #include "MetaIO.h"
+#include "C2pa.h"
 
 #include <runa.h>
 
@@ -143,21 +144,36 @@ ReadResult read(const QString& path)
     if (r.ok)   // FFmpeg for the facts; the tags read directly where this app writes them
         if (const auto tags = nativeTags(path)) r.tags = *tags;
     if (r.ok) r.info.append({"Size", QLocale().formattedDataSize(fi.size(), 1, QLocale::DataSizeTraditionalFormat)});
+    if (r.ok) r.credentials = c2pa::read(path);
     return r;
 }
 
 static WriteResult writeFitting(const QString& path, const QHash<QString, QString>& changes, QStringList refused);
 
-WriteResult write(const QString& path, const QHash<QString, QString>& changes)
+WriteResult write(const QString& path, const QHash<QString, QString>& changes, bool dropCredentials)
 {
     WriteResult w;
-    if (changes.isEmpty()) {
+    if (changes.isEmpty() && !dropCredentials) {
         w.ok = true;
         return w;
     }
     if (!QFileInfo(path).isWritable()) {
         w.error = "The file is read-only.";
         return w;
+    }
+    if (dropCredentials) {   // first, so the tags are written to the file without them
+        w.error = c2pa::remove(path);
+        if (!w.error.isEmpty()) return w;
+        if (!c2pa::read(path).isEmpty()) {
+            w.error = "The Content Credentials are still there after removing them.";
+            return w;
+        }
+        if (changes.isEmpty()) {
+            w.after = read(path);
+            w.ok = w.after.ok;
+            if (!w.ok) w.error = "The file was written but can't be read back: " + w.after.error;
+            return w;
+        }
     }
     // A named field this format has no place for isn't written at all (not
     // even as a free-form tag nothing would read); it is reported instead.

@@ -41,6 +41,8 @@ QtObject {
     property color warning
     property color warningSoft
     property color rating          // lit stars
+    property color credentials     // Content Credentials marks (AI / CR)
+    property color credentialsSoft
 
     // File kinds (the badges in the list)
     property color audio

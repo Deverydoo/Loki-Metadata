@@ -96,6 +96,7 @@ QVariant FileListModel::data(const QModelIndex& index, int role) const
     case StateRole: return stateName(f.state);
     case ErrorRole: return f.error;
     case WarningRole: return f.warning;
+    case CredentialsRole: return !f.hasCredentials() ? QString() : f.credentials.value("ai").toBool() ? "ai" : "cr";
     }
     return {};
 }
@@ -104,7 +105,8 @@ QHash<int, QByteArray> FileListModel::roleNames() const
 {
     return {{NameRole, "name"},         {FolderRole, "folder"},     {PathRole, "path"},   {BadgeRole, "badge"},
             {KindRole, "kind"},         {SelectedRole, "selected"}, {ModifiedRole, "modified"},
-            {StateRole, "state"},       {ErrorRole, "error"},       {WarningRole, "warning"}};
+            {StateRole, "state"},       {ErrorRole, "error"},       {WarningRole, "warning"},
+            {CredentialsRole, "credentials"}};
 }
 
 void FileListModel::rowChanged(int row)
@@ -256,7 +258,19 @@ QVariantMap MetaEditor::current() const
     for (const auto& [label, text] : f.info) info.append(QVariantMap{{"label", label}, {"text", text}});
     return {{"name", f.name},        {"path", f.path},   {"folder", f.folder},          {"badge", f.badge},
             {"kind", kindName(f.kind)}, {"info", info},   {"state", stateName(f.state)}, {"error", f.error},
-            {"warning", f.warning}};
+            {"warning", f.warning},   {"credentials", f.credentials}, {"dropCredentials", f.dropCredentials}};
+}
+
+int MetaEditor::credentialsCount() const
+{
+    const QList<int> sel = readySelection();
+    return int(std::count_if(sel.begin(), sel.end(), [&](int i) { return list_[i].hasCredentials(); }));
+}
+
+int MetaEditor::credentialsDropping() const
+{
+    const QList<int> sel = readySelection();
+    return int(std::count_if(sel.begin(), sel.end(), [&](int i) { return list_[i].hasCredentials() && list_[i].dropCredentials; }));
 }
 
 QString MetaEditor::selectionSummary() const
@@ -378,6 +392,7 @@ void MetaEditor::loaded(const QString& path, const ReadResult& r)
     f.error = r.ok ? QString() : r.error;
     f.tags = r.tags;
     f.info = r.info;
+    f.credentials = r.credentials;
     files_.rowChanged(i);
     emit countChanged();   // loadingCount
     if (f.selected) selectionDidChange();
@@ -544,10 +559,40 @@ void MetaEditor::addField(const QString& rawKey)
     emit selectionChanged();   // addableFields
 }
 
+void MetaEditor::removeCredentials()
+{
+    if (busy_) return;
+    int n = 0;
+    for (int i : readySelection()) {
+        MetaFile& f = list_[i];
+        if (!f.hasCredentials() || f.dropCredentials) continue;
+        f.dropCredentials = true;
+        files_.rowChanged(i);
+        ++n;
+    }
+    if (!n) return;
+    emit modifiedChanged();
+    emit currentChanged();
+}
+
+void MetaEditor::keepCredentials()
+{
+    if (busy_) return;
+    for (int i : readySelection()) {
+        list_[i].dropCredentials = false;
+        files_.rowChanged(i);
+    }
+    emit modifiedChanged();
+    emit currentChanged();
+}
+
 void MetaEditor::revertAll()
 {
     if (busy_) return;
-    for (MetaFile& f : list_) f.pending.clear();
+    for (MetaFile& f : list_) {
+        f.pending.clear();
+        f.dropCredentials = false;
+    }
     extraKeys_.clear();
     files_.allChanged();
     emit modifiedChanged();
@@ -563,12 +608,13 @@ void MetaEditor::apply()
     struct Job {
         QString path;
         QHash<QString, QString> changes;
+        bool dropCredentials = false;
     };
     QList<Job> jobs;
     for (int i = 0; i < list_.size(); ++i) {
         MetaFile& f = list_[i];
         if (!f.modified() || f.state != MetaFile::Ready) continue;
-        Job j{f.path, {}};
+        Job j{f.path, {}, f.dropCredentials};
         for (auto it = f.pending.begin(); it != f.pending.end(); ++it) j.changes.insert(it.key(), it.value().value_or(QString()));
         jobs.append(j);
         f.state = MetaFile::Saving;
@@ -590,7 +636,7 @@ void MetaEditor::apply()
     QPointer<MetaEditor> self(this);
     QThread* worker = QThread::create([self, jobs] {
         for (const Job& j : jobs) {
-            const WriteResult w = meta::write(j.path, j.changes);
+            const WriteResult w = meta::write(j.path, j.changes, j.dropCredentials);
             QMetaObject::invokeMethod(QCoreApplication::instance(), [self, path = j.path, w] {
                 if (self) self->saved(path, w);
             }, Qt::QueuedConnection);
@@ -612,6 +658,8 @@ void MetaEditor::saved(const QString& path, const WriteResult& w)
         if (w.ok) {
             f.tags = w.after.tags;
             f.info = w.after.info;
+            f.credentials = w.after.credentials;
+            f.dropCredentials = false;
             f.pending.clear();
             f.error.clear();
             QStringList labels;

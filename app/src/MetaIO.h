@@ -11,6 +11,7 @@
 #include <QPair>
 #include <QString>
 #include <QStringList>
+#include <QVariantMap>
 
 #include <optional>
 
@@ -23,6 +24,7 @@ struct ReadResult {
     QString error;
     Pairs tags;   // field key -> value
     Pairs info;   // read-only facts: label -> text
+    QVariantMap credentials;   // Content Credentials (C2pa.h); empty when none
 };
 
 struct WriteResult {
@@ -35,9 +37,10 @@ struct WriteResult {
 ReadResult read(const QString& path);
 
 /// Applies @p changes (field key -> new value; an empty value removes the
-/// field). Afterwards the file is read again to check every change stuck;
-/// any that did not are listed in notStored.
-WriteResult write(const QString& path, const QHash<QString, QString>& changes);
+/// field), after deleting the file's Content Credentials when
+/// @p dropCredentials. Afterwards the file is read again to check every
+/// change stuck; any that did not are listed in notStored.
+WriteResult write(const QString& path, const QHash<QString, QString>& changes, bool dropCredentials = false);
 
 // The image formats (ImageMeta.cpp).
 ReadResult readPng(const QString& path);
@@ -64,6 +67,9 @@ std::optional<Pairs> readAiffTags(const QString& path);
 std::optional<QString> writeAiff(const QString& path, const QHash<QString, QString>& changes, QStringList* notStored);
 std::optional<Pairs> readMp4Tags(const QString& path);
 std::optional<QString> writeMp4(const QString& path, const QHash<QString, QString>& changes, QStringList* notStored);
+/// Removes the top-level boxes that start at @p starts, moving the offsets
+/// that pointed past them. Nothing when the file isn't one it can parse.
+std::optional<QString> removeMp4Boxes(const QString& path, const QList<qint64>& starts);
 ReadResult readWebp(const QString& path);
 QString writeWebp(const QString& path, const QHash<QString, QString>& changes, QStringList* notStored);
 ReadResult readOffice(const QString& path);

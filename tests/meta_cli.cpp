@@ -3,6 +3,7 @@
 //
 //   meta_cli <file>                       print its fields and file info
 //   meta_cli <file> key=value [key=...]   write fields (key= removes one)
+//   meta_cli <file> --remove-credentials  delete its Content Credentials
 //   meta_cli --samples <folder>           write the hand-built samples (docx, odt, webp, pdf)
 
 #include "DocSamples.h"
@@ -50,11 +51,20 @@ int main(int argc, char** argv)
         }
         for (const auto& [k, v] : r.tags) print(k + " = " + v);
         for (const auto& [k, v] : r.info) print("  (" + k + ": " + v + ")");
+        for (auto it = r.credentials.begin(); it != r.credentials.end(); ++it) {
+            const QVariant& v = it.value();
+            print("  [credentials] " + it.key() + ": "
+                  + (v.typeId() == QMetaType::QStringList ? v.toStringList().join(" | ") : v.toString()));
+        }
         return 0;
     }
     QHash<QString, QString> changes;
-    for (const QString& a : args.mid(1)) changes.insert(a.section('=', 0, 0), a.section('=', 1));
-    const meta::WriteResult w = meta::write(path, changes);
+    bool drop = false;
+    for (const QString& a : args.mid(1)) {
+        if (a == "--remove-credentials") drop = true;
+        else changes.insert(a.section('=', 0, 0), a.section('=', 1));
+    }
+    const meta::WriteResult w = meta::write(path, changes, drop);
     if (!w.ok) {
         print("error: " + w.error);
         return 1;

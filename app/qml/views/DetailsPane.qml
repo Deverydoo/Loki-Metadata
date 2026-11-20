@@ -190,6 +190,16 @@ Rectangle {
                 }
             }
 
+            // --- Content Credentials -------------------------------------
+            CredentialsSection {
+                Layout.fillWidth: true
+                Layout.margins: Theme.size.paddingLarge
+                Layout.topMargin: Theme.size.paddingLarge + Theme.size.gap
+                Layout.bottomMargin: 0
+                file: pane.file
+                single: pane.single
+            }
+
             // --- File info (one file) -------------------------------------
             ColumnLayout {
                 visible: pane.single && pane.file.state !== "loading" && (pane.file.info ?? []).length > 0

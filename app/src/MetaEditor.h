@@ -32,6 +32,8 @@ struct MetaFile {
     meta::Pairs tags;  // as on disk
     meta::Pairs info;
     QHash<QString, std::optional<QString>> pending;   // waiting for Apply; nullopt removes
+    QVariantMap credentials;        // Content Credentials, as read (C2pa.h)
+    bool dropCredentials = false;   // remove them on Apply
     bool selected = false;
 
     std::optional<QString> original(const QString& key) const;
@@ -39,7 +41,8 @@ struct MetaFile {
     std::optional<QString> value(const QString& key) const;
     /// The fields it has, pending changes included, in display order.
     QStringList keys() const;
-    bool modified() const { return !pending.isEmpty(); }
+    bool modified() const { return !pending.isEmpty() || dropCredentials; }
+    bool hasCredentials() const { return credentials.value("present").toBool(); }
 };
 
 class MetaEditor;
@@ -48,7 +51,7 @@ class FileListModel : public QAbstractListModel {
     Q_OBJECT
 public:
     enum Role { NameRole = Qt::UserRole + 1, FolderRole, PathRole, BadgeRole, KindRole, SelectedRole, ModifiedRole,
-                StateRole, ErrorRole, WarningRole };
+                StateRole, ErrorRole, WarningRole, CredentialsRole };
     explicit FileListModel(MetaEditor* editor);
     int rowCount(const QModelIndex& parent = {}) const override;
     QVariant data(const QModelIndex& index, int role) const override;
@@ -96,6 +99,9 @@ class MetaEditor : public QObject {
     Q_PROPERTY(QString selectionSummary READ selectionSummary NOTIFY selectionChanged)
     Q_PROPERTY(QVariantList addableFields READ addableFields NOTIFY selectionChanged)
     Q_PROPERTY(int modifiedCount READ modifiedCount NOTIFY modifiedChanged)
+    // Selected files with Content Credentials, and how many of them are set to lose them.
+    Q_PROPERTY(int credentialsCount READ credentialsCount NOTIFY currentChanged)
+    Q_PROPERTY(int credentialsDropping READ credentialsDropping NOTIFY currentChanged)
     Q_PROPERTY(int loadingCount READ loadingCount NOTIFY countChanged)
     Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
     Q_PROPERTY(double progress READ progress NOTIFY progressChanged)
@@ -117,6 +123,8 @@ public:
     QString selectionSummary() const;
     QVariantList addableFields() const;
     int modifiedCount() const;
+    int credentialsCount() const;
+    int credentialsDropping() const;
     int loadingCount() const;
     bool busy() const { return busy_; }
     double progress() const { return progress_; }
@@ -141,6 +149,11 @@ public:
     Q_INVOKABLE void revertField(const QString& key);
     Q_INVOKABLE void removeField(const QString& key);
     Q_INVOKABLE void addField(const QString& key);
+
+    // Content Credentials: shown, and removable from the selected files on
+    // Apply. Never edited (they are signed by whoever made the file).
+    Q_INVOKABLE void removeCredentials();
+    Q_INVOKABLE void keepCredentials();
 
     Q_INVOKABLE void revertAll();
     /// Writes every pending change, in the background.

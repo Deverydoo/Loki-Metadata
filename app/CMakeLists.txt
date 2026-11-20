@@ -19,6 +19,8 @@ qt_add_library(metadata_ui STATIC
     src/AiffMeta.cpp
     src/WebpMeta.cpp
     src/Mp4Meta.cpp
+    src/C2pa.h
+    src/C2pa.cpp
     src/Zip.h
     src/Zip.cpp
     src/OfficeMeta.cpp
@@ -41,7 +43,7 @@ endif()
 set(VCPKG_STATIC_MD "${_vcpkg}/installed/x64-windows-static-md" CACHE PATH "vcpkg x64-windows-static-md prefix (qpdf, zlib)")
 target_include_directories(metadata_ui PRIVATE "${VCPKG_STATIC_MD}/include")
 target_link_libraries(metadata_ui PUBLIC "${VCPKG_STATIC_MD}/lib/qpdf.lib" "${VCPKG_STATIC_MD}/lib/jpeg.lib"
-                      "${VCPKG_STATIC_MD}/lib/zs.lib" advapi32)
+                      "${VCPKG_STATIC_MD}/lib/zs.lib" advapi32 crypt32)
 
 # The theme: tokens, the theme in use, and the themes themselves. A new theme
 # is one more file under qml/theme/themes/, listed here and in Theme.qml.
@@ -76,6 +78,7 @@ qt_add_qml_module(metadata_ui
         qml/components/Badge.qml
         qml/components/Banner.qml
         qml/components/SectionHeading.qml
+        qml/components/CredentialsChip.qml
         qml/views/MainView.qml
         qml/views/TopBar.qml
         qml/views/StatusBar.qml
@@ -84,6 +87,7 @@ qt_add_qml_module(metadata_ui
         qml/views/DetailsPane.qml
         qml/views/FieldRow.qml
         qml/views/DropOverlay.qml
+        qml/views/CredentialsSection.qml
 )
 
 configure_file(resources/LokiMetadata.rc.in ${CMAKE_CURRENT_BINARY_DIR}/LokiMetadata.rc @ONLY)

@@ -16,6 +16,12 @@ the installer (`LokiMetadata-<version>-Setup.exe`), or the portable zip
   the files that can hold it.
 - **Add a custom field** adds one of your own where the format allows it.
   A field none of the selected files can hold is refused, with a note.
+- **Content Credentials** (the signed C2PA record that ChatGPT, Suno, Adobe
+  and some cameras put in a file) are shown under the fields: what made the
+  file, whether it says AI made it, who signed it, the steps it records, and
+  whether the file still matches what was signed. Files that carry them are
+  marked **AI** or **CR** in the list. They can be removed, but never edited:
+  they're signed by whoever made the file, so changing them would forge them.
 - Nothing is written until **Apply**. Changed files carry an amber dot;
   **Discard** forgets every change. After Apply each file is read back to
   check every change stuck.
@@ -42,6 +48,22 @@ packet before and after).
 | Word, Excel, PowerPoint | docProps/core.xml, app.xml and custom.xml (copyright and your own fields) inside the zip; every other entry copied byte for byte. |
 | OpenDocument | meta.xml inside the zip (mimetype stays first and stored). |
 | PDF | The information dictionary and XMP, through qpdf; signed PDFs are refused. |
+
+### Content Credentials
+
+Read from the PNG `caBX` chunk, JPG APP11 (JUMBF) segments, the WebP and WAV
+`C2PA` chunk, the MP3 ID3 GEOB frame, and the MP4/M4A/MOV top-level `uuid`
+box. The current manifest (the last in the store) is described; earlier ones
+are counted. "Since signing" recomputes the record's data hash
+(`c2pa.hash.data`, with its exclusions) over the file. The signature itself
+isn't checked; [contentcredentials.org/verify](https://contentcredentials.org/verify)
+does that. Removal deletes only that chunk, segment, frame or box (in MP4
+files the media offsets are moved back to match). An invisible watermark in
+the pixels or sound, if the maker added one, isn't touched; the app says so.
+
+Editing any field of a file with Content Credentials changes the file, so its
+record then shows "Changed": it still says what it said, it just no longer
+matches byte for byte.
 
 ### What Windows Explorer shows
 
@@ -81,7 +103,7 @@ powershell -ExecutionPolicy Bypass -File scripts\package.ps1
 Developer tools in `build/bin/Release` (not shipped):
 
 - `test_metadata.exe`: the tests (`LOKI_UI_SHOTS=<folder>` saves pictures of the page).
-- `meta_cli.exe <file> [key=value ...]`: read or write fields from the command line.
+- `meta_cli.exe <file> [key=value ...] [--remove-credentials]`: read or write fields from the command line.
 - `winprops.exe get|set <file> ...`: what Windows' property system reads, or writes.
 - `runa_samples.exe <folder>` / `--packets <file>`: sample files; a fingerprint of every packet.
 

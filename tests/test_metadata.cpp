@@ -8,6 +8,7 @@
 #include "MetaIO.h"
 #include "Zip.h"
 #include "DocSamples.h"
+#include "C2paSamples.h"
 
 #include <runa.h>
 
@@ -1006,6 +1007,217 @@ private slots:
     }
 
     // --- The page --------------------------------------------------------------
+
+    // --- Content Credentials ---------------------------------------------------
+
+    void credentials_data()
+    {
+        QTest::addColumn<QString>("file");
+        QTest::addColumn<int>("home");
+        QTest::addColumn<bool>("split");
+        QTest::newRow("png") << "sample.png" << int(C2paHome::Png) << false;
+        QTest::newRow("jpg") << "camera.jpg" << int(C2paHome::Jpeg) << false;
+        QTest::newRow("jpg in three segments") << "sample.jpg" << int(C2paHome::Jpeg) << true;
+        QTest::newRow("webp") << "sample.webp" << int(C2paHome::Webp) << false;
+        QTest::newRow("wav") << "sample.wav" << int(C2paHome::Wav) << false;
+        QTest::newRow("mp3") << "sample.mp3" << int(C2paHome::Mp3) << false;
+        QTest::newRow("mp4") << "sample.mp4" << int(C2paHome::Mp4) << false;
+        QTest::newRow("faststart mp4") << "faststart.mp4" << int(C2paHome::Mp4) << false;
+        QTest::newRow("m4a") << "sample.m4a" << int(C2paHome::Mp4) << false;
+    }
+
+    // Read from where each format keeps them, still there after editing other
+    // fields (no longer matching the file), and removed without touching
+    // anything else.
+    void credentials()
+    {
+        QFETCH(QString, file);
+        QFETCH(int, home);
+        QFETCH(bool, split);
+        const C2paHome where = C2paHome(home);
+        const bool mp4 = where == C2paHome::Mp4;
+        const bool image = where == C2paHome::Png || where == C2paHome::Jpeg || where == C2paHome::Webp;
+        const QString plain = samples_.filePath(file);
+        const QByteArray withCr = withCredentials(fileBytes(plain), where, split);
+        QVERIFY(!withCr.isEmpty());
+        const QString path = work_.filePath("cr_" + QString(QTest::currentDataTag()).replace(' ', '_') + "." + QFileInfo(file).suffix());
+        {
+            QFile f(path);
+            QVERIFY(f.open(QIODevice::WriteOnly | QIODevice::Truncate));
+            f.write(withCr);
+        }
+
+        // The same picture or sound as before, whatever is in it.
+        auto sameContent = [&] {
+            if (image) return QImage(plain).isNull() || QImage(path) == QImage(plain);
+            return packetsOf(path) == packetsOf(plain);
+        };
+        QVERIFY(sameContent());
+
+        const ReadResult r = meta::read(path);
+        QVERIFY2(r.ok, qPrintable(r.error));
+        const QVariantMap c = r.credentials;
+        QVERIFY(c.value("present").toBool());
+        QVERIFY(c.value("ai").toBool());
+        QCOMPARE(c.value("source").toString(), QString("Made by AI"));
+        QCOMPARE(c.value("tool").toString(), QString("Test Generator 2.0"));
+        QCOMPARE(c.value("recordedBy").toString(), QString("Test Maker 1.0"));
+        QVERIFY(c.value("actions").toStringList().contains("Created with Test Generator 2.0"));
+        QCOMPARE(c.value("history").toInt(), 0);
+        QCOMPARE(c.value("match").toString(), mp4 ? QString() : QString("unchanged"));
+        QCOMPARE(c.value("notes").toStringList().size(), 1);   // the hidden watermark
+        QVERIFY(!c.value("when").toString().isEmpty());
+
+        // Other fields edited: the record stays, saying what it said.
+        WriteResult w = meta::write(path, {{"copyright", "2026 Einar Blackstone"}});
+        QVERIFY2(w.ok, qPrintable(w.error));
+        QVERIFY(w.after.credentials.value("present").toBool());
+        QCOMPARE(w.after.credentials.value("tool").toString(), QString("Test Generator 2.0"));
+        if (!mp4) QCOMPARE(w.after.credentials.value("match").toString(), QString("changed"));
+
+        // Removed: the record goes, nothing else does.
+        w = meta::write(path, {}, true);
+        QVERIFY2(w.ok, qPrintable(w.error));
+        QVERIFY(w.after.credentials.isEmpty());
+        QCOMPARE(tagOf(w.after.tags, "copyright"), QString("2026 Einar Blackstone"));
+        QVERIFY(sameContent());
+        const QByteArray after = fileBytes(path);
+        QVERIFY(!after.contains("c2pa.claim"));
+        if (where == C2paHome::Wav || where == C2paHome::Webp)
+            QCOMPARE(qint64(qFromLittleEndian<quint32>(after.constData() + 4)), qint64(after.size()) - 8);
+        if (mp4) QVERIFY(ffmpegOpens(path));
+        if (where == C2paHome::Mp3) QVERIFY(!id3Frames(after).contains("GEOB"));
+        // Nothing left: removing again is fine and changes nothing.
+        QVERIFY(meta::write(path, {}, true).ok);
+        QCOMPARE(fileBytes(path), after);
+    }
+
+    // A damaged record is reported, never a crash, and can still be removed.
+    void damagedCredentials()
+    {
+        const QByteArray png = fileBytes(samples_.filePath("sample.png"));
+        const QString path = work_.filePath("damaged_cr.png");
+        auto save = [&](const QByteArray& b) {
+            QFile f(path);
+            return f.open(QIODevice::WriteOnly | QIODevice::Truncate) && f.write(b) == b.size();
+        };
+        QVERIFY(save(withStore(png, C2paHome::Png, damagedStore())));
+        const ReadResult r = meta::read(path);
+        QVERIFY(r.ok);
+        QVERIFY(r.credentials.value("present").toBool());
+        QCOMPARE(r.credentials.value("notes").toStringList().size(), 1);
+        QVERIFY(meta::write(path, {}, true).ok);
+        QVERIFY(meta::read(path).credentials.isEmpty());
+        QCOMPARE(QImage(path), QImage(samples_.filePath("sample.png")));
+
+        // Every truncation, and a byte spoiled at a time all through a good one.
+        const QByteArray cut = damagedStore();
+        for (qsizetype n = 0; n < cut.size(); n += 5) {
+            QVERIFY(save(withStore(png, C2paHome::Png, cut.left(n))));
+            meta::read(path);
+        }
+        const QByteArray good = withCredentials(png, C2paHome::Png);
+        const qsizetype to = good.size() - (png.size() - 33);
+        for (qsizetype i = 33; i < to; i += 3) {
+            QByteArray spoiled = good;
+            spoiled[i] = char(spoiled[i] ^ 0x5A);
+            QVERIFY(save(spoiled));
+            meta::read(path);
+        }
+    }
+
+    // In the editor: marked in the list, removed on Apply along with other
+    // edits, and Keep takes the removal back.
+    void editorRemovesCredentials()
+    {
+        auto make = [&](const QString& sample, C2paHome home, const QString& as) {
+            const QString to = work_.filePath(as);
+            QFile f(to);
+            if (f.open(QIODevice::WriteOnly | QIODevice::Truncate)) f.write(withCredentials(fileBytes(samples_.filePath(sample)), home));
+            return to;
+        };
+        const QStringList paths{make("sample.png", C2paHome::Png, "ed_a.png"), make("sample.mp3", C2paHome::Mp3, "ed_b.mp3"),
+                                copy("sample.wav", "ed_c.wav")};
+        MetaEditor e;
+        e.addPaths(paths);
+        QVERIFY(e.waitForLoads(10000));
+        QCOMPARE(e.files()->data(e.files()->index(0), FileListModel::CredentialsRole).toString(), QString("ai"));
+        QCOMPARE(e.files()->data(e.files()->index(2), FileListModel::CredentialsRole).toString(), QString());
+        QVERIFY(e.current().value("credentials").toMap().value("present").toBool());   // the first file, shown
+
+        e.selectAll();
+        QCOMPARE(e.credentialsCount(), 2);
+        e.removeCredentials();
+        QCOMPARE(e.credentialsDropping(), 2);
+        QCOMPARE(e.modifiedCount(), 2);   // the WAV has none to remove
+        QVERIFY(meta::read(paths[0]).credentials.value("present").toBool());   // nothing written yet
+        e.keepCredentials();
+        QCOMPARE(e.modifiedCount(), 0);
+
+        e.removeCredentials();
+        e.setField("copyright", "2026 HexKitten");
+        e.apply();
+        QVERIFY(e.waitForApply(20000));
+        QCOMPARE(e.messageKind(), QString("success"));
+        QCOMPARE(e.modifiedCount(), 0);
+        QCOMPARE(e.credentialsCount(), 0);
+        for (const QString& p : paths) {
+            const ReadResult r = meta::read(p);
+            QVERIFY(r.credentials.isEmpty());
+            QCOMPARE(tagOf(r.tags, "copyright"), QString("2026 HexKitten"));
+        }
+    }
+
+    void credentialsOnThePage()
+    {
+        const QString path = work_.filePath("page_cr.png");
+        {
+            QFile f(path);
+            QVERIFY(f.open(QIODevice::WriteOnly | QIODevice::Truncate));
+            f.write(withCredentials(fileBytes(samples_.filePath("sample.png")), C2paHome::Png));
+        }
+        MetaEditor e;
+        QQmlApplicationEngine engine;
+        engine.rootContext()->setContextProperty("editor", &e);
+        engine.loadFromModule("LokiMetadata", "Main");
+        auto* window = qobject_cast<QQuickWindow*>(engine.rootObjects().value(0));
+        QVERIFY(window);
+        window->resize(1240, 1000);
+        QVERIFY(QTest::qWaitForWindowExposed(window));
+        e.addPaths({path, copy("sample.wav", "page_cr.wav")});
+        QVERIFY(e.waitForLoads(10000));
+        e.click(0, 0);
+        QTest::qWait(150);
+        auto find = [&](const QString& name) {
+            QQuickItem* found = nullptr;
+            std::function<void(QQuickItem*)> walk = [&](QQuickItem* i) {
+                if (i->objectName() == name && i->isVisible()) found = i;
+                for (QQuickItem* c : i->childItems()) walk(c);
+            };
+            walk(window->contentItem());
+            return found;
+        };
+        const QString shots = qEnvironmentVariable("LOKI_UI_SHOTS");
+        auto shot = [&](const QString& name) {
+            if (shots.isEmpty()) return;
+            QTest::qWait(150);
+            window->grabWindow().save(QDir(shots).filePath(name + ".png"));
+        };
+        QQuickItem* button = find("credentialsButton");
+        QVERIFY(button);
+        shot("6_credentials");
+        QMetaObject::invokeMethod(button, "clicked");
+        QCOMPARE(e.credentialsDropping(), 1);
+        QCOMPARE(e.modifiedCount(), 1);
+        shot("6b_credentials_removing");
+        e.click(1, 0);   // the WAV: no record, no section
+        QTest::qWait(100);
+        QVERIFY(!find("credentialsButton"));
+        e.selectAll();
+        QTest::qWait(100);
+        QVERIFY(find("credentialsButton"));
+        shot("6c_credentials_several");
+    }
 
     void thePage()
     {

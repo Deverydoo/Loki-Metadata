@@ -643,4 +643,57 @@ std::optional<QString> writeMp4(const QString& path, const QHash<QString, QStrin
     return QString();
 }
 
+std::optional<QString> removeMp4Boxes(const QString& path, const QList<qint64>& starts)
+{
+    QFile in(path);
+    if (!in.open(QIODevice::ReadOnly)) return QString("Can't open the file: " + in.errorString());
+    const auto top = topLevel(in);
+    if (!top) return std::nullopt;
+    QList<Box> gone;   // highest first, so each shift is in the old file's terms
+    for (const Box& b : *top)
+        if (starts.contains(b.at)) gone.prepend(b);
+    if (gone.isEmpty()) return QString();
+
+    // Every absolute offset past a removed box moves back by its size: the
+    // chunk offsets in the moov, fragments' base offsets, the fragment index.
+    auto shifted = [&](const Box& b, QByteArray bytes) -> std::optional<QByteArray> {
+        if (b.type != "moov" && b.type != "moof" && b.type != "mfra") return bytes;
+        if (b.type != "moov" && b.head == 16) return std::nullopt;
+        for (const Box& g : gone) {
+            const bool ok = b.type == "moov" ? shiftChunkOffsets(bytes, Box{"moov", 0, bytes.size(), b.head}, g.end(), -g.size)
+                          : b.type == "moof" ? shiftFragment(bytes, g.end(), -g.size)
+                                             : shiftIndex(bytes, g.end(), -g.size);
+            if (!ok) return std::nullopt;
+        }
+        return bytes;
+    };
+
+    const QString temp = tempPathFor(path);
+    QFile out(temp);
+    if (!out.open(QIODevice::WriteOnly | QIODevice::Truncate)) return QString("Can't write in this folder: " + out.errorString());
+    auto abandon = [&](const std::optional<QString>& why) {
+        out.close();
+        QFile::remove(temp);
+        return why;
+    };
+    for (const Box& b : *top) {
+        if (starts.contains(b.at)) continue;
+        if (b.type == "moov" || b.type == "moof" || b.type == "mfra") {
+            if (b.size > (256 << 20)) return abandon(std::nullopt);
+            in.seek(b.at);
+            const auto bytes = shifted(b, in.read(b.size));
+            if (!bytes) return abandon(QString("This file's layout can't be rewritten safely, so nothing was removed."));
+            out.write(*bytes);
+            continue;
+        }
+        if (!copyRange(in, out, b.at, b.size)) return abandon(QString("Copying the file failed (is the disk full?)."));
+    }
+    if (out.error() != QFile::NoError) return abandon("Writing failed: " + out.errorString());
+    out.close();
+    in.close();
+    QString error;
+    if (!replaceFile(path, temp, &error)) return error;
+    return QString();
+}
+
 } // namespace meta

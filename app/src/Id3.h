@@ -7,6 +7,7 @@
 
 #include "MetaIO.h"
 
+#include <functional>
 #include <optional>
 
 namespace meta::id3 {
@@ -31,6 +32,10 @@ qint64 tagSize(const QByteArray& header);
 /// nothing comes back for 2.2 or a damaged tag.
 std::optional<Tag> parse(const QByteArray& bytes);
 
+/// A frame's content with its storage tricks (unsynchronisation, data
+/// length) undone. Nothing for compressed or encrypted frames.
+std::optional<QByteArray> content(const Tag& tag, const Frame& frame);
+
 /// Every field the tag holds.
 Pairs fields(const Tag& tag);
 
@@ -45,3 +50,9 @@ QByteArray build(const Tag& tag, int padding);
 const QStringList& genres();
 
 } // namespace meta::id3
+
+namespace meta {
+/// Rewrites an MP3's leading ID3v2 tag after @p edit has changed it; the
+/// audio is copied as it is. Nothing when the tag is one it can't edit.
+std::optional<QString> rewriteMp3Tag(const QString& path, const std::function<void(id3::Tag&)>& edit);
+} // namespace meta

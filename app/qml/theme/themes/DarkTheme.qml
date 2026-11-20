@@ -51,5 +51,7 @@ ThemeSpec {
         imageSoft: "#2680d183"
         document: "#ef9f6e"
         documentSoft: "#26ef9f6e"
+        credentials: "#ee8fcf"
+        credentialsSoft: "#26ee8fcf"
     }
 }

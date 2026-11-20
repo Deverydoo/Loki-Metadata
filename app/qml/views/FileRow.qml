@@ -15,6 +15,7 @@ Rectangle {
     required property string warning
     required property bool selected
     required property bool modified
+    required property string credentials   // "ai", "cr" or ""
 
     signal clicked(int index, int modifiers)
 
@@ -62,6 +63,17 @@ Rectangle {
                 color: row.error !== "" ? Theme.color.danger : Theme.color.textFaint
                 font.family: Theme.font.family
                 font.pixelSize: Theme.font.small
+            }
+        }
+
+        CredentialsChip {
+            visible: row.credentials !== ""
+            ai: row.credentials === "ai"
+            HoverHandler { id: chipHover }
+            AppToolTip {
+                visible: chipHover.hovered
+                text: row.credentials === "ai" ? "Its Content Credentials say it was made by AI."
+                                               : "It carries Content Credentials (a signed record of where it came from)."
             }
         }
 

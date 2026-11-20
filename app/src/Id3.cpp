@@ -84,23 +84,6 @@ QByteArray resync(const QByteArray& b)
     return out;
 }
 
-// A frame's content, with its storage tricks undone. Nothing for compressed
-// or encrypted frames (they are kept, just not shown).
-std::optional<QByteArray> content(const Tag& t, const Frame& f)
-{
-    QByteArray d = f.data;
-    if (t.version == 3) {
-        if (f.flags & 0x00C0) return std::nullopt;
-        if (f.flags & 0x0020) d = d.mid(1);   // group id
-        return d;
-    }
-    if (f.flags & 0x000C) return std::nullopt;
-    if (f.flags & 0x0040) d = d.mid(1);       // group id
-    if (f.flags & 0x0001) d = d.mid(4);       // data length
-    if (f.flags & 0x0002) d = resync(d);
-    return d;
-}
-
 QString decodeOne(quint8 enc, const QByteArray& b)
 {
     switch (enc) {
@@ -249,6 +232,23 @@ qint64 tagSize(const QByteArray& header)
     if (header.size() < 10 || !header.startsWith("ID3")) return 0;
     const bool footer = quint8(header[3]) == 4 && (quint8(header[5]) & 0x10);
     return 10 + qint64(synchsafe(header.constData() + 6)) + (footer ? 10 : 0);
+}
+
+// A frame's content, with its storage tricks undone. Nothing for compressed
+// or encrypted frames (they are kept, just not shown).
+std::optional<QByteArray> content(const Tag& t, const Frame& f)
+{
+    QByteArray d = f.data;
+    if (t.version == 3) {
+        if (f.flags & 0x00C0) return std::nullopt;
+        if (f.flags & 0x0020) d = d.mid(1);   // group id
+        return d;
+    }
+    if (f.flags & 0x000C) return std::nullopt;
+    if (f.flags & 0x0040) d = d.mid(1);       // group id
+    if (f.flags & 0x0001) d = d.mid(4);       // data length
+    if (f.flags & 0x0002) d = resync(d);
+    return d;
 }
 
 std::optional<Tag> parse(const QByteArray& bytes)

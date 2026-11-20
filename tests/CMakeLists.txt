@@ -1,4 +1,4 @@
-qt_add_executable(test_metadata test_metadata.cpp DocSamples.h DocSamples.cpp)
+qt_add_executable(test_metadata test_metadata.cpp DocSamples.h DocSamples.cpp C2paSamples.h C2paSamples.cpp)
 target_link_libraries(test_metadata PRIVATE metadata_ui metadata_uiplugin Qt6::Test)
 get_target_property(_qmake Qt6::qmake IMPORTED_LOCATION)
 get_filename_component(_qtbin "${_qmake}" DIRECTORY)

@@ -125,15 +125,15 @@ std::optional<Pairs> readMp3Tags(const QString& path)
     return out;
 }
 
-std::optional<QString> writeMp3(const QString& path, const QHash<QString, QString>& changes, QStringList* notStored)
+std::optional<QString> rewriteMp3Tag(const QString& path, const std::function<void(id3::Tag&)>& edit)
 {
     QFile in(path);
     if (!in.open(QIODevice::ReadOnly)) return QString("Can't open the file: " + in.errorString());
     qint64 audioAt = 0;
     auto tag = leadingTag(in, &audioAt);
-    if (!tag) return std::nullopt;   // ID3v2.2 or damaged: FFmpeg's turn
+    if (!tag) return std::nullopt;   // ID3v2.2 or damaged
     const V1 v1 = readV1(in);
-    id3::apply(*tag, changes, notStored);
+    edit(*tag);
     const QByteArray bytes = id3::build(*tag, 1024);   // padding, so other taggers can edit in place
 
     const QString temp = tempPathFor(path);
@@ -158,6 +158,11 @@ std::optional<QString> writeMp3(const QString& path, const QHash<QString, QStrin
     QString error;
     if (!replaceFile(path, temp, &error)) return error;
     return QString();
+}
+
+std::optional<QString> writeMp3(const QString& path, const QHash<QString, QString>& changes, QStringList* notStored)
+{
+    return rewriteMp3Tag(path, [&](id3::Tag& tag) { id3::apply(tag, changes, notStored); });
 }
 
 } // namespace meta
