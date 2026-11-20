@@ -10,6 +10,8 @@ the installer (`LokiMetadata-<version>-Setup.exe`), or the portable zip
 (unzip anywhere and run `LokiMetadata.exe`).
 
 - Drop files or folders on the window, or use **Add files** / **Add folder**.
+  Tick **Include subfolders** to add the files in a folder's subfolders too
+  (remembered for next time).
 - Click a file to see every field its type can hold, filled in or not.
   Ctrl-click, Shift-click or Ctrl+A to select several: every field any of
   them can hold is shown. Where the values differ the box says "Different

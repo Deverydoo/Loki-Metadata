@@ -38,9 +38,18 @@ Rectangle {
         AppButton {
             text: "Add folder"
             glyph: Icons.folder
-            tip: "Add every supported file in a folder and its subfolders (Ctrl+Shift+O)"
+            tip: editor.includeSubfolders ? "Add every supported file in a folder and its subfolders (Ctrl+Shift+O)"
+                                          : "Add every supported file in a folder (Ctrl+Shift+O)"
             enabled: !editor.busy
             onClicked: bar.addFolderRequested()
+        }
+        AppCheckBox {
+            objectName: "subfoldersBox"
+            Layout.leftMargin: Theme.size.gapSmall
+            text: "Include subfolders"
+            tip: "When adding a folder (or dropping one here), add the files in its subfolders too"
+            checked: editor.includeSubfolders
+            onToggled: editor.includeSubfolders = checked
         }
 
         Item { Layout.fillWidth: true }

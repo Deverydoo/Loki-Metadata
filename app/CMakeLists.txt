@@ -79,6 +79,7 @@ qt_add_qml_module(metadata_ui
         qml/components/Banner.qml
         qml/components/SectionHeading.qml
         qml/components/CredentialsChip.qml
+        qml/components/AppCheckBox.qml
         qml/views/MainView.qml
         qml/views/TopBar.qml
         qml/views/StatusBar.qml

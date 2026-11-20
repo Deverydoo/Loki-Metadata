@@ -104,6 +104,9 @@ class MetaEditor : public QObject {
     Q_PROPERTY(int credentialsDropping READ credentialsDropping NOTIFY currentChanged)
     Q_PROPERTY(int loadingCount READ loadingCount NOTIFY countChanged)
     Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
+    // Whether an added folder's subfolders are searched too (Add folder and
+    // folders dropped on the window). Off by default; the app remembers it.
+    Q_PROPERTY(bool includeSubfolders READ includeSubfolders WRITE setIncludeSubfolders NOTIFY includeSubfoldersChanged)
     Q_PROPERTY(double progress READ progress NOTIFY progressChanged)
     Q_PROPERTY(QString message READ message NOTIFY messageChanged)
     Q_PROPERTY(QString messageKind READ messageKind NOTIFY messageChanged)
@@ -127,12 +130,14 @@ public:
     int credentialsDropping() const;
     int loadingCount() const;
     bool busy() const { return busy_; }
+    bool includeSubfolders() const { return includeSubfolders_; }
+    void setIncludeSubfolders(bool on);
     double progress() const { return progress_; }
     QString message() const { return message_; }
     QString messageKind() const { return messageKind_; }
 
-    /// Files and folders (folders are searched, subfolders too). Unsupported
-    /// files and ones already in the list are skipped.
+    /// Files and folders (a folder's subfolders too, with includeSubfolders).
+    /// Unsupported files and ones already in the list are skipped.
     Q_INVOKABLE void addUrls(const QVariantList& urls);
     void addPaths(const QStringList& paths);
 
@@ -170,6 +175,7 @@ signals:
     void currentChanged();
     void modifiedChanged();
     void busyChanged();
+    void includeSubfoldersChanged();
     void progressChanged();
     void messageChanged();
 
@@ -192,6 +198,7 @@ private:
     QStringList extraKeys_;   // fields added with "Add field" for the current selection
     int anchor_ = -1, current_ = -1;
     bool busy_ = false;
+    bool includeSubfolders_ = false;
     double progress_ = 0;
     int applyTotal_ = 0, applyDone_ = 0, applyFailed_ = 0, applyPartial_ = 0;
     QString message_, messageKind_ = "info";

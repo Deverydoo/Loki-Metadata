@@ -8,6 +8,7 @@
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQuickStyle>
+#include <QSettings>
 #include <QtQml/qqmlextensionplugin.h>
 
 Q_IMPORT_QML_PLUGIN(LokiMetadataPlugin)
@@ -21,6 +22,10 @@ int main(int argc, char** argv)
     QQuickStyle::setStyle("Basic");   // the controls are styled by the theme, not by Windows
 
     MetaEditor editor;
+    QSettings settings;   // the user's choices, kept between runs
+    editor.setIncludeSubfolders(settings.value("includeSubfolders", false).toBool());
+    QObject::connect(&editor, &MetaEditor::includeSubfoldersChanged, &editor,
+                     [&] { settings.setValue("includeSubfolders", editor.includeSubfolders()); });
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty("editor", &editor);
     engine.loadFromModule("LokiMetadata", "Main");

@@ -1,9 +1,9 @@
 ; Loki Metadata installer (Inno Setup 6). Built by scripts/package.ps1, which
 ; passes the version and the folder the release was laid out in:
-;   ISCC /DMyAppVersion=0.1.0 "/DSourceDir=..\build\release\Loki Metadata" installer\LokiMetadata.iss
+;   ISCC /DMyAppVersion=0.1.1 "/DSourceDir=..\build\release\Loki Metadata" installer\LokiMetadata.iss
 
 #ifndef MyAppVersion
-  #define MyAppVersion "0.1.0"
+  #define MyAppVersion "0.1.1"
 #endif
 #ifndef SourceDir
   #define SourceDir "..\build\release\Loki Metadata"

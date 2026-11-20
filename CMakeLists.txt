@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(LokiMetadata VERSION 0.1.0 LANGUAGES CXX)
+project(LokiMetadata VERSION 0.1.1 LANGUAGES CXX)
 
 # Loki Metadata: a bulk metadata editor for audio, video and images.
 #

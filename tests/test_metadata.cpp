@@ -999,11 +999,28 @@ private slots:
         QFile::copy(samples_.filePath("sample.png"), dir.filePath("b.png"));
         QVERIFY(QFile(dir.filePath("notes.txt")).open(QIODevice::WriteOnly));
         MetaEditor e;
+        QVERIFY(!e.includeSubfolders());   // off unless asked
         e.addUrls({QUrl::fromLocalFile(dir.path())});
-        QCOMPARE(e.count(), 2);
+        QCOMPARE(e.count(), 1);            // b.png; not sub/a.wav
+        e.setIncludeSubfolders(true);
+        e.addUrls({QUrl::fromLocalFile(dir.path())});
+        QCOMPARE(e.count(), 2);            // now sub/a.wav too, and b.png not twice
         e.addUrls({QUrl::fromLocalFile(dir.filePath("b.png"))});   // already there
         QCOMPARE(e.count(), 2);
         QVERIFY(e.waitForLoads(10000));
+
+        // A folder with nothing at its top but files below says how to get them.
+        MetaEditor f;
+        f.addUrls({QUrl::fromLocalFile(dir.filePath("sub/.."))});
+        QCOMPARE(f.count(), 1);
+        MetaEditor g;
+        QTemporaryDir deep;
+        QDir(deep.path()).mkpath("a/b");
+        QFile::copy(samples_.filePath("sample.wav"), deep.filePath("a/b/c.wav"));
+        g.addUrls({QUrl::fromLocalFile(deep.path())});
+        QCOMPARE(g.count(), 0);
+        QVERIFY(g.message().contains("Include subfolders"));
+        QCOMPARE(g.messageKind(), QString("warning"));
     }
 
     // --- The page --------------------------------------------------------------
@@ -1254,6 +1271,14 @@ private slots:
             walk(window->contentItem());
             return found;
         };
+
+        QQuickItem* subfolders = find("subfoldersBox");   // the check box follows the editor, and sets it
+        QVERIFY(subfolders && !subfolders->property("checked").toBool());
+        e.setIncludeSubfolders(true);
+        QVERIFY(subfolders->property("checked").toBool());
+        QMetaObject::invokeMethod(subfolders, "toggle");
+        QMetaObject::invokeMethod(subfolders, "toggled");
+        QVERIFY(!e.includeSubfolders());
 
         QQuickItem* logo = find("headerLogo");
         QVERIFY(logo);

@@ -322,17 +322,29 @@ void MetaEditor::addUrls(const QVariantList& urls)
     addPaths(paths);
 }
 
+void MetaEditor::setIncludeSubfolders(bool on)
+{
+    if (on == includeSubfolders_) return;
+    includeSubfolders_ = on;
+    emit includeSubfoldersChanged();
+}
+
 void MetaEditor::addPaths(const QStringList& paths)
 {
     QStringList found;
     int skipped = 0;
+    QStringList filters;
+    for (const QString& ext : supportedExtensions()) filters.append("*." + ext);
+    bool deeper = false;   // a folder with nothing in it but files in its subfolders
     for (const QString& p : paths) {
         const QFileInfo fi(p);
         if (fi.isDir()) {
-            QStringList filters;
-            for (const QString& ext : supportedExtensions()) filters.append("*." + ext);
-            QDirIterator it(fi.absoluteFilePath(), filters, QDir::Files, QDirIterator::Subdirectories);
+            const qsizetype before = found.size();
+            QDirIterator it(fi.absoluteFilePath(), filters, QDir::Files,
+                            includeSubfolders_ ? QDirIterator::Subdirectories : QDirIterator::NoIteratorFlags);
             while (it.hasNext()) found.append(it.next());
+            if (!includeSubfolders_ && found.size() == before)
+                deeper = deeper || QDirIterator(fi.absoluteFilePath(), filters, QDir::Files, QDirIterator::Subdirectories).hasNext();
         } else if (isSupported(p)) {
             found.append(fi.absoluteFilePath());
         } else if (fi.exists()) {
@@ -373,7 +385,10 @@ void MetaEditor::addPaths(const QStringList& paths)
         files_.rowChanged(0);
         selectionDidChange();
     }
-    if (!added && found.isEmpty() && (skipped || !paths.isEmpty()))
+    if (!added && found.isEmpty() && deeper)
+        say("Nothing to add in that folder itself, but its subfolders have files. Tick Include subfolders to add them.",
+            "warning");
+    else if (!added && found.isEmpty() && (skipped || !paths.isEmpty()))
         say("Nothing to add: these aren't files it can edit (music, video, pictures, Office documents or PDFs).", "warning");
     else if (!added && !found.isEmpty())
         say("Those files are already in the list.");

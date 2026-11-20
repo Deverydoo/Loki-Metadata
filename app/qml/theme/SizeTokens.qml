@@ -19,6 +19,7 @@ QtObject {
 
     property int toolbarHeight: 56
     property int logoHeight: 44          // the logo in the header
+    property int checkSize: 16           // a check box's box
     property int statusHeight: 30
     property int buttonHeight: 32
     property int fieldHeight: 34
