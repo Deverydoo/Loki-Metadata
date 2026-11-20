@@ -9,10 +9,12 @@
 #include "Zip.h"
 #include "DocSamples.h"
 #include "C2paSamples.h"
+#include "C2pa.h"
 
 #include <runa.h>
 
 #include <QDir>
+#include <QElapsedTimer>
 #include <QDirIterator>
 #include <QFile>
 #include <QGuiApplication>
@@ -1023,6 +1025,81 @@ private slots:
         QCOMPARE(g.messageKind(), QString("warning"));
     }
 
+    // Thousands of files: added in one go, read in batches, and removed in
+    // one go, with the rows, the loading count and the path lookup all agreeing.
+    void manyFiles()
+    {
+        QTemporaryDir dir;
+        const QStringList kinds{"sample.mp3", "sample.png", "sample.wav"};
+        const int n = 3000;
+        for (int i = 0; i < n; ++i) {
+            const QString k = kinds[i % kinds.size()];
+            QVERIFY(QFile::copy(samples_.filePath(k), dir.filePath(QString("f%1.%2").arg(i, 4, 10, QChar('0')).arg(QFileInfo(k).suffix()))));
+        }
+        MetaEditor e;
+        QElapsedTimer t;
+        t.start();
+        e.addUrls({QUrl::fromLocalFile(dir.path())});
+        const qint64 adding = t.elapsed();
+        QCOMPARE(e.count(), n);
+        QVERIFY2(adding < 1500, qPrintable(QString("adding %1 files took %2 ms").arg(n).arg(adding)));
+        e.addUrls({QUrl::fromLocalFile(dir.path())});   // all already there
+        QCOMPARE(e.count(), n);
+        QVERIFY(e.waitForLoads(60000));
+        QCOMPARE(e.loadingCount(), 0);
+        for (const MetaFile& f : e.list()) QCOMPARE(f.state, MetaFile::Ready);
+        qInfo().noquote() << QString("%1 files: added in %2 ms, read in %3 ms").arg(n).arg(adding).arg(t.elapsed());
+
+        // Remove every other one of the first hundred, then everything.
+        e.clearSelection();
+        for (int i = 0; i < 100; i += 2) e.click(i, Qt::ControlModifier);
+        e.removeSelected();
+        QCOMPARE(e.count(), n - 50);
+        e.addPaths({dir.filePath("f0000.mp3")});   // the lookup knows it's gone, and where the rest are
+        QCOMPARE(e.count(), n - 49);
+        QVERIFY(e.waitForLoads(10000));
+        e.selectAll();
+        t.restart();
+        e.removeSelected();
+        QCOMPARE(e.count(), 0);
+        QVERIFY2(t.elapsed() < 1000, qPrintable(QString("removing took %1 ms").arg(t.elapsed())));
+    }
+
+    // Removing files while they're still being read leaves the count right.
+    void removingWhileReading()
+    {
+        QTemporaryDir dir;
+        for (int i = 0; i < 400; ++i) QVERIFY(QFile::copy(samples_.filePath("sample.mp3"), dir.filePath(QString("r%1.mp3").arg(i))));
+        MetaEditor e;
+        e.addUrls({QUrl::fromLocalFile(dir.path())});
+        e.selectAll();
+        e.removeSelected();
+        QCOMPARE(e.count(), 0);
+        QCOMPARE(e.loadingCount(), 0);
+        QTest::qWait(300);   // the reads that were under way come back to nothing
+        QCOMPARE(e.loadingCount(), 0);
+        e.addUrls({QUrl::fromLocalFile(dir.path())});
+        QVERIFY(e.waitForLoads(20000));
+        QCOMPARE(e.count(), 400);
+    }
+
+    void remembersTheLastFolder()
+    {
+        QTemporaryDir dir;
+        QDir(dir.path()).mkpath("albums/one");
+        QFile::copy(samples_.filePath("sample.mp3"), dir.filePath("albums/one/a.mp3"));
+        MetaEditor e;
+        QVERIFY(e.lastFolderUrl().isEmpty());
+        e.addUrls({QUrl::fromLocalFile(dir.filePath("albums/one"))});
+        QCOMPARE(e.lastFolderUrl(), QUrl::fromLocalFile(dir.filePath("albums/one")));
+        QCOMPARE(e.lastFolderParentUrl(), QUrl::fromLocalFile(dir.filePath("albums")));   // the picker opens beside it
+        e.addUrls({QUrl::fromLocalFile(samples_.filePath("sample.png"))});   // files: their folder
+        QCOMPARE(e.lastFolderUrl(), QUrl::fromLocalFile(samples_.path()));
+        e.setLastFolder(dir.filePath("gone"));   // a folder that's not there: the dialog's own default
+        QVERIFY(e.lastFolderUrl().isEmpty());
+        QVERIFY(e.waitForLoads(10000));
+    }
+
     // --- The page --------------------------------------------------------------
 
     // --- Content Credentials ---------------------------------------------------
@@ -1081,7 +1158,9 @@ private slots:
         QCOMPARE(c.value("recordedBy").toString(), QString("Test Maker 1.0"));
         QVERIFY(c.value("actions").toStringList().contains("Created with Test Generator 2.0"));
         QCOMPARE(c.value("history").toInt(), 0);
-        QCOMPARE(c.value("match").toString(), mp4 ? QString() : QString("unchanged"));
+        QCOMPARE(c.value("hashable").toBool(), !mp4);
+        QCOMPARE(c.value("match").toString(), QString());   // a list read doesn't hash the file...
+        QCOMPARE(c2pa::read(path).value("match").toString(), mp4 ? QString() : QString("unchanged"));   // ...a full one does
         QCOMPARE(c.value("notes").toStringList().size(), 1);   // the hidden watermark
         QVERIFY(!c.value("when").toString().isEmpty());
 
@@ -1090,7 +1169,7 @@ private slots:
         QVERIFY2(w.ok, qPrintable(w.error));
         QVERIFY(w.after.credentials.value("present").toBool());
         QCOMPARE(w.after.credentials.value("tool").toString(), QString("Test Generator 2.0"));
-        if (!mp4) QCOMPARE(w.after.credentials.value("match").toString(), QString("changed"));
+        if (!mp4) QCOMPARE(c2pa::read(path).value("match").toString(), QString("changed"));
 
         // Removed: the record goes, nothing else does.
         w = meta::write(path, {}, true);
@@ -1107,6 +1186,60 @@ private slots:
         // Nothing left: removing again is fine and changes nothing.
         QVERIFY(meta::write(path, {}, true).ok);
         QCOMPARE(fileBytes(path), after);
+    }
+
+    // Big MP4s with the moov at the end are edited without copying the media:
+    // the new moov is added at the end, the old one turned into blank free
+    // space. Other layouts still get a fresh copy.
+    void bigMp4EditedInPlace()
+    {
+        auto topBoxes = [](const QByteArray& b) {
+            QStringList out;
+            for (qsizetype pos = 0; pos + 8 <= b.size();) {
+                qint64 n = qFromBigEndian<quint32>(b.constData() + pos);
+                if (n == 1) n = qint64(qFromBigEndian<quint64>(b.constData() + pos + 8));
+                if (n < 8) break;
+                out.append(QString::fromLatin1(b.mid(pos + 4, 4)));
+                pos += n;
+            }
+            return out;
+        };
+        setInPlaceMinSize(0);   // the samples are small
+        const QString path = copy("sample.mp4", "inplace.mp4");
+        const QByteArray before = fileBytes(path);
+        QCOMPARE(topBoxes(before).last(), QString("moov"));
+        const QByteArray packets = packetsOf(path);
+
+        WriteResult w = meta::write(path, {{"title", "Weight of Legacy"}, {"copyright", "2026 Blood&Loot Entertainment"}});
+        QVERIFY2(w.ok, qPrintable(w.error));
+        QByteArray after = fileBytes(path);
+        QCOMPARE(after.left(before.size() - 2000).left(1000), before.left(1000));   // the start of the file untouched
+        QStringList boxes = topBoxes(after);
+        QCOMPARE(boxes.last(), QString("moov"));
+        QCOMPARE(boxes[boxes.size() - 2], QString("free"));   // where the old moov was
+        QVERIFY(after.size() < before.size() * 2);
+        QCOMPARE(packetsOf(path), packets);
+        QCOMPARE(tagOf(w.after.tags, "title"), QString("Weight of Legacy"));
+        QVERIFY(ffmpegOpens(path));
+
+        // Removed: the old value isn't left behind in the free space.
+        w = meta::write(path, {{"title", ""}});
+        QVERIFY2(w.ok, qPrintable(w.error));
+        QVERIFY(!hasTag(w.after.tags, "title"));
+        QVERIFY(!fileBytes(path).contains("Weight of Legacy"));
+        QCOMPARE(tagOf(w.after.tags, "copyright"), QString("2026 Blood&Loot Entertainment"));
+        QCOMPARE(packetsOf(path), packets);
+
+        // The moov first (fast start) or fragments: copied as before, layout kept.
+        for (const char* name : {"faststart.mp4", "fragmented.mp4"}) {
+            const QString other = copy(name, QString("inplace_") + name);
+            const QStringList was = topBoxes(fileBytes(other));
+            const QByteArray otherPackets = packetsOf(other);
+            QVERIFY(meta::write(other, {{"title", "Copied"}}).ok);
+            QCOMPARE(topBoxes(fileBytes(other)), was);
+            QCOMPARE(packetsOf(other), otherPackets);
+        }
+        setInPlaceMinSize(64ll << 20);
     }
 
     // A damaged record is reported, never a crash, and can still be removed.
@@ -1161,6 +1294,8 @@ private slots:
         QCOMPARE(e.files()->data(e.files()->index(0), FileListModel::CredentialsRole).toString(), QString("ai"));
         QCOMPARE(e.files()->data(e.files()->index(2), FileListModel::CredentialsRole).toString(), QString());
         QVERIFY(e.current().value("credentials").toMap().value("present").toBool());   // the first file, shown
+        // ...and checked against its hash in the background.
+        QTRY_COMPARE(e.current().value("credentials").toMap().value("match").toString(), QString("unchanged"));
 
         e.selectAll();
         QCOMPARE(e.credentialsCount(), 2);

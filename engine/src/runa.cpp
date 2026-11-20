@@ -75,7 +75,13 @@ int openInput(Input& in, const char* path, char* error, int errorSize)
 {
     int r = avformat_open_input(&in.fc, path, nullptr, nullptr);
     if (r < 0) return fail(error, errorSize, "Can't open the file: " + avError(r));
-    r = avformat_find_stream_info(in.fc, nullptr);
+    // One decoder thread per stream while probing: by default each video
+    // decoder starts a thread (and frame buffers) per core, for every file
+    // read at once, which adds up to hundreds of MB over a big folder.
+    std::vector<AVDictionary*> opts(in.fc->nb_streams, nullptr);
+    for (AVDictionary*& d : opts) av_dict_set(&d, "threads", "1", 0);
+    r = avformat_find_stream_info(in.fc, opts.empty() ? nullptr : opts.data());
+    for (AVDictionary*& d : opts) av_dict_free(&d);
     if (r < 0) return fail(error, errorSize, "Can't read the file's streams: " + avError(r));
     return 0;
 }

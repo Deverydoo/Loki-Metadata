@@ -10,8 +10,10 @@ the installer (`LokiMetadata-<version>-Setup.exe`), or the portable zip
 (unzip anywhere and run `LokiMetadata.exe`).
 
 - Drop files or folders on the window, or use **Add files** / **Add folder**.
-  Tick **Include subfolders** to add the files in a folder's subfolders too
-  (remembered for next time).
+  Tick **Include subfolders** to add the files in a folder's subfolders too.
+  Both dialogs open where you last added from; both choices are remembered.
+  Thousands of files at once are fine (20,000 small files are listed and read
+  in under a second).
 - Click a file to see every field its type can hold, filled in or not.
   Ctrl-click, Shift-click or Ctrl+A to select several: every field any of
   them can hold is shown. Where the values differ the box says "Different
@@ -34,7 +36,8 @@ the installer (`LokiMetadata-<version>-Setup.exe`), or the portable zip
 
 Every format is written beside the original and swapped in with
 `ReplaceFile`, so a failure leaves the original alone and the file keeps its
-creation date. Only the metadata changes; sound, pictures and document
+creation date. (Big MP4s are the exception, edited in place in steps that
+each leave a valid file; see the table.) Apply saves a few files at a time. Only the metadata changes; sound, pictures and document
 content are copied byte for byte (the tests fingerprint every audio and video
 packet before and after).
 
@@ -45,7 +48,7 @@ packet before and after).
 | FLAC | The VORBIS_COMMENT block; pictures, seek table and the rest kept. The comment also goes to DESCRIPTION, where Windows reads it. |
 | OGG, Opus | The comment header, header pages laid out again; audio pages renumbered with fresh checksums when needed. |
 | AIFF | An ID3v2 tag in an "ID3 " chunk. |
-| MP4, M4A, M4V, MOV | The iTunes item list (moov/udta/meta/ilst); MOV's QuickTime text items kept in step. Rating: Windows' Xtra box. Offsets after the moov (fast-start files, fragmented recordings) are moved when its size changes. |
+| MP4, M4A, M4V, MOV | The iTunes item list (moov/udta/meta/ilst); MOV's QuickTime text items kept in step. Rating: Windows' Xtra box. Offsets after the moov (fast-start files, fragmented recordings) are moved when its size changes. Files of 64 MB or more with the moov at the end (most recordings) are edited in place: the new moov is added after the old one, which becomes blank free space, so a 20 GB video saves as fast as a small one and the media is never copied. |
 | MKV, WebM, AVI | `runa.dll` (FFmpeg, static inside the DLL): every stream copied as it is into a new file with the new tags. |
 | JPG, WebP | EXIF IFD0 (title, author, comment, keywords, rating...), added as a new IFD0 so camera data, GPS and thumbnails stay where they were. XMP updated too, if there is some. |
 | PNG | The text chunks; XMP updated too, if there is some. |
@@ -110,6 +113,7 @@ Developer tools in `build/bin/Release` (not shipped):
 - `meta_cli.exe <file> [key=value ...] [--remove-credentials]`: read or write fields from the command line.
 - `winprops.exe get|set <file> ...`: what Windows' property system reads, or writes.
 - `runa_samples.exe <folder>` / `--packets <file>`: sample files; a fingerprint of every packet.
+- `load_bench.exe <folder> [--ui] [--subfolders] [--apply]`: adding a big folder: time, UI stalls, memory (`--apply` writes, so only on copies).
 
 ## License
 

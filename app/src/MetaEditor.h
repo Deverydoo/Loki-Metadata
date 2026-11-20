@@ -13,7 +13,10 @@
 #include "MetaIO.h"
 
 #include <QAbstractListModel>
+#include <QHash>
+#include <QMutex>
 #include <QObject>
+#include <QSet>
 #include <QUrl>
 #include <QVariant>
 
@@ -107,6 +110,12 @@ class MetaEditor : public QObject {
     // Whether an added folder's subfolders are searched too (Add folder and
     // folders dropped on the window). Off by default; the app remembers it.
     Q_PROPERTY(bool includeSubfolders READ includeSubfolders WRITE setIncludeSubfolders NOTIFY includeSubfoldersChanged)
+    // Where files were last added from, for the next Add files / Add folder
+    // (the app remembers it). The folder's parent too: the folder picker
+    // opens there, so the last folder sits among its neighbours.
+    Q_PROPERTY(QString lastFolder READ lastFolder WRITE setLastFolder NOTIFY lastFolderChanged)
+    Q_PROPERTY(QUrl lastFolderUrl READ lastFolderUrl NOTIFY lastFolderChanged)
+    Q_PROPERTY(QUrl lastFolderParentUrl READ lastFolderParentUrl NOTIFY lastFolderChanged)
     Q_PROPERTY(double progress READ progress NOTIFY progressChanged)
     Q_PROPERTY(QString message READ message NOTIFY messageChanged)
     Q_PROPERTY(QString messageKind READ messageKind NOTIFY messageChanged)
@@ -132,6 +141,10 @@ public:
     bool busy() const { return busy_; }
     bool includeSubfolders() const { return includeSubfolders_; }
     void setIncludeSubfolders(bool on);
+    QString lastFolder() const { return lastFolder_; }
+    void setLastFolder(const QString& folder);
+    QUrl lastFolderUrl() const;
+    QUrl lastFolderParentUrl() const;
     double progress() const { return progress_; }
     QString message() const { return message_; }
     QString messageKind() const { return messageKind_; }
@@ -176,6 +189,7 @@ signals:
     void modifiedChanged();
     void busyChanged();
     void includeSubfoldersChanged();
+    void lastFolderChanged();
     void progressChanged();
     void messageChanged();
 
@@ -184,11 +198,14 @@ private:
     friend class FieldListModel;
 
     int indexOf(const QString& path) const;
+    void rebuildIndex();
+    void startRead(const QString& path);
+    void takeReads();           // the reads finished so far, into the list
+    void checkShownCredentials();   // the hash check for the one file on show
     QList<int> selectedRows() const;   // ready ones only, when readyOnly
     QList<int> readySelection() const;
     void selectionDidChange();
     void say(const QString& text, const QString& kind = "info");
-    void loaded(const QString& path, const meta::ReadResult& r);
     void saved(const QString& path, const meta::WriteResult& w);
     void finishApply();
 
@@ -203,4 +220,16 @@ private:
     int applyTotal_ = 0, applyDone_ = 0, applyFailed_ = 0, applyPartial_ = 0;
     QString message_, messageKind_ = "info";
     QThreadPool* pool_;
+    QThreadPool* applyPool_;   // saves, a few at a time
+
+    // With thousands of files: rows found by path without a search, the
+    // number still loading kept as a count, and finished reads handed to the
+    // UI thread in batches rather than one event (and one redraw) each.
+    QHash<QString, int> rowOf_;   // lower-case path -> row
+    int loading_ = 0;
+    QMutex readsMutex_;
+    QList<QPair<QString, meta::ReadResult>> reads_;   // finished, not yet taken (readsMutex_)
+    bool takeQueued_ = false;                         // (readsMutex_)
+    QSet<QString> checking_;   // files whose credentials are being checked
+    QString lastFolder_;
 };

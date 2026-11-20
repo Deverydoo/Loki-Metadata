@@ -633,7 +633,7 @@ QString hashMatch(const QString& path, const QVariantMap& binding, const QString
     return h.result() == expected ? "unchanged" : "changed";
 }
 
-QVariantMap describe(const QString& path, const QByteArray& store)
+QVariantMap describe(const QString& path, const QByteArray& store, bool checkMatch)
 {
     QVariantMap out{{"present", true}};
     Node root;
@@ -716,8 +716,8 @@ QVariantMap describe(const QString& path, const QByteArray& store)
     }
     if (const Node* sig = childLabelled(active, "c2pa.signature")) out["signer"] = signerOf(dataOf(*sig));
 
-    if (!dataHash.isEmpty()) out["match"] = hashMatch(path, dataHash, claimAlg);
-    else out["match"] = QString();
+    out["hashable"] = !dataHash.isEmpty();
+    out["match"] = checkMatch && !dataHash.isEmpty() ? hashMatch(path, dataHash, claimAlg) : QString();
 
     if (watermark)
         notes.append("The maker also hid a watermark in the content itself. Removing the credentials doesn't remove that.");
@@ -781,13 +781,13 @@ QString writeWithout(const QString& path, QList<QPair<qint64, qint64>> cut, cons
 
 bool supports(const QString& path) { return formatOf(path) != Format::None; }
 
-QVariantMap read(const QString& path)
+QVariantMap read(const QString& path, bool checkMatch)
 {
     if (!supports(path)) return {};
     const auto found = locate(path);
     if (!found) return {};
     if (found->store.isEmpty()) return {{"present", true}, {"notes", QStringList{"The record is there but couldn't be read."}}};
-    return describe(path, found->store);
+    return describe(path, found->store, checkMatch);
 }
 
 QString remove(const QString& path)

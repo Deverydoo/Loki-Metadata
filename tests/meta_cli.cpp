@@ -7,6 +7,7 @@
 //   meta_cli --samples <folder>           write the hand-built samples (docx, odt, webp, pdf)
 
 #include "DocSamples.h"
+#include "C2pa.h"
 #include "MetaIO.h"
 
 #include <QFile>
@@ -51,7 +52,8 @@ int main(int argc, char** argv)
         }
         for (const auto& [k, v] : r.tags) print(k + " = " + v);
         for (const auto& [k, v] : r.info) print("  (" + k + ": " + v + ")");
-        for (auto it = r.credentials.begin(); it != r.credentials.end(); ++it) {
+        const QVariantMap credentials = meta::c2pa::read(path);   // with the hash check
+        for (auto it = credentials.begin(); it != credentials.end(); ++it) {
             const QVariant& v = it.value();
             print("  [credentials] " + it.key() + ": "
                   + (v.typeId() == QMetaType::QStringList ? v.toStringList().join(" | ") : v.toString()));

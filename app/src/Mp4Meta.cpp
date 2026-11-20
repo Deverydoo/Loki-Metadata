@@ -574,19 +574,83 @@ std::optional<QByteArray> readMoov(QFile& f, Box* where, QList<Box>* top)
 
 bool isMov(const QString& path) { return path.endsWith(".mov", Qt::CaseInsensitive); }
 
+// A big file whose moov is the last box: the new moov goes after it, then the
+// old one becomes free space and is blanked. The media isn't touched, so a
+// 20 GB video takes as long as a small one. Safe at every step: until the old
+// moov is renamed it comes first and is the one players read (FFmpeg skips a
+// second moov); after, the new one is the only moov. Blanking the old one
+// means a removed value doesn't linger in the file.
+// Nothing when the file isn't laid out for it (fragmented, moov not last).
+std::optional<QString> appendMoov(QFile& in, const QString& path, const Box& where, const QList<Box>& top,
+                                  const QByteArray& fresh)
+{
+    const qint64 size = in.size();
+    if (size < inPlaceMinSize() || where.end() != size) return std::nullopt;
+    for (const Box& b : top)
+        if (b.type == "moof" || b.type == "mfra") return std::nullopt;
+    in.seek(where.at);
+    if (u32(in.read(4), 0) == 0) return std::nullopt;   // "runs to the end of the file": would swallow the new one
+    in.close();
+
+    QFile f(path);
+    if (!f.open(QIODevice::ReadWrite)) return QString("Can't write to the file: " + f.errorString());
+    if (!f.seek(size) || f.write(fresh) != fresh.size() || !flushToDisk(f)) {
+        const QString why = f.errorString();
+        f.resize(size);   // as it was
+        return "Writing failed (is the disk full?): " + why;
+    }
+    if (!f.seek(where.at + 4) || f.write("free", 4) != 4 || !flushToDisk(f))
+        return "Writing failed: " + f.errorString();
+    const QByteArray zeros(int(std::min<qint64>(where.size - where.head, 1 << 20)), '\0');
+    f.seek(where.bodyAt());
+    for (qint64 left = where.size - where.head; left > 0;) {
+        const qint64 n = std::min<qint64>(left, zeros.size());
+        if (f.write(zeros.constData(), n) != n) return "Writing failed: " + f.errorString();
+        left -= n;
+    }
+    if (!flushToDisk(f)) return "Writing failed: " + f.errorString();
+    return QString();
+}
+
 } // namespace
 
+// Only the moov's udta box is read: in a long video the rest of the moov
+// (the sample tables) can be tens of MB, and the tags never need it.
 std::optional<Pairs> readMp4Tags(const QString& path)
 {
     QFile f(path);
     if (!f.open(QIODevice::ReadOnly)) return std::nullopt;
-    Box where;
-    QList<Box> top;
-    const auto moov = readMoov(f, &where, &top);
+    const auto top = topLevel(f);
+    if (!top) return std::nullopt;
+    std::optional<Box> moov;
+    for (const Box& b : *top)
+        if (b.type == "moov") {
+            if (moov) return std::nullopt;   // two of them: not touching that
+            moov = b;
+        }
     if (!moov) return std::nullopt;
-    QByteArray m = *moov;
-    if (where.head == 16) m = box("moov", m.mid(16));   // children read the same way either way
-    return fieldsOf(m);
+    for (qint64 pos = moov->bodyAt(); pos + 8 <= moov->end();) {
+        f.seek(pos);
+        const QByteArray h = f.read(16);
+        if (h.size() < 8) return std::nullopt;
+        qint64 size = u32(h, 0);
+        if (size == 1) {
+            if (h.size() < 16) return std::nullopt;
+            size = qint64(u64(h, 8));
+        } else if (size == 0) {
+            size = moov->end() - pos;
+        }
+        if (size < 8 || pos + size > moov->end()) return std::nullopt;
+        if (h.mid(4, 4) == "udta") {
+            if (size > (64 << 20)) return std::nullopt;
+            f.seek(pos);
+            const QByteArray udta = f.read(size);
+            if (udta.size() < size) return std::nullopt;
+            return fieldsOf(box("moov", udta));
+        }
+        pos += size;
+    }
+    return Pairs{};   // no udta: no tags
 }
 
 std::optional<QString> writeMp4(const QString& path, const QHash<QString, QString>& changes, QStringList* notStored)
@@ -599,6 +663,7 @@ std::optional<QString> writeMp4(const QString& path, const QHash<QString, QStrin
     if (!moov) return std::nullopt;
     auto fresh = newMoov(*moov, isMov(path), changes, notStored);
     if (!fresh) return std::nullopt;
+    if (const auto done = appendMoov(in, path, where, top, *fresh)) return done;
 
     const qint64 delta = qint64(fresh->size()) - where.size;
     const qint64 from = where.end();   // offsets past the old moov move

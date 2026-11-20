@@ -26,6 +26,9 @@ int main(int argc, char** argv)
     editor.setIncludeSubfolders(settings.value("includeSubfolders", false).toBool());
     QObject::connect(&editor, &MetaEditor::includeSubfoldersChanged, &editor,
                      [&] { settings.setValue("includeSubfolders", editor.includeSubfolders()); });
+    editor.setLastFolder(settings.value("lastFolder").toString());
+    QObject::connect(&editor, &MetaEditor::lastFolderChanged, &editor,
+                     [&] { settings.setValue("lastFolder", editor.lastFolder()); });
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty("editor", &editor);
     engine.loadFromModule("LokiMetadata", "Main");

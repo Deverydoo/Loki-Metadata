@@ -23,3 +23,7 @@ target_link_libraries(meta_cli PRIVATE metadata_ui)
 add_executable(winprops winprops.cpp)
 target_compile_definitions(winprops PRIVATE UNICODE _UNICODE)
 target_link_libraries(winprops PRIVATE propsys ole32 shell32)
+
+# load_bench: how adding thousands of files behaves (time, UI stalls, memory). Not shipped.
+qt_add_executable(load_bench load_bench.cpp)
+target_link_libraries(load_bench PRIVATE metadata_ui metadata_uiplugin psapi)

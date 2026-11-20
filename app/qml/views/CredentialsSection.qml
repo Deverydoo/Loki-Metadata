@@ -133,6 +133,7 @@ ColumnLayout {
                     add("Earlier records", c.history === 1 ? "1, from an earlier step" : c.history + ", from earlier steps")
                 add("Since signing", c.match === "unchanged" ? "Unchanged: the file is exactly as it was signed"
                                    : c.match === "changed" ? "Changed (editing its metadata counts too); the record still says what it said"
+                                   : c.hashable ? "Checking..."
                                    : "")
                 return rows
             }

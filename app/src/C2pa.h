@@ -14,10 +14,13 @@
 namespace meta::c2pa {
 
 /// What the file's credentials say; empty when it has none. Keys:
-///   present (bool), source ("AI-generated"...), ai (bool), tool, recordedBy,
-///   signer, when, actions (list of text), history (int: earlier records),
-///   match ("unchanged" / "changed" / "" not checked), notes (list of text).
-QVariantMap read(const QString& path);
+///   present (bool), source ("Made by AI"...), ai (bool), tool, recordedBy,
+///   provider, author, signer, when, actions (list of text), history (int:
+///   earlier records), notes (list of text), hashable (bool: the record has
+///   a data hash to check), match ("unchanged" / "changed" / "" not checked).
+/// @p checkMatch hashes the whole file to fill in match: slow for big files,
+/// so the list is read without it and the file on show is checked after.
+QVariantMap read(const QString& path, bool checkMatch = true);
 
 /// Whether this kind of file can carry credentials here.
 bool supports(const QString& path);

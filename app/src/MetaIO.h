@@ -13,6 +13,8 @@
 #include <QStringList>
 #include <QVariantMap>
 
+class QFile;
+
 #include <optional>
 
 namespace meta {
@@ -24,7 +26,7 @@ struct ReadResult {
     QString error;
     Pairs tags;   // field key -> value
     Pairs info;   // read-only facts: label -> text
-    QVariantMap credentials;   // Content Credentials (C2pa.h); empty when none
+    QVariantMap credentials;   // Content Credentials (C2pa.h), match not checked; empty when none
 };
 
 struct WriteResult {
@@ -77,6 +79,15 @@ QString writeOffice(const QString& path, const QHash<QString, QString>& changes,
 ReadResult readPdf(const QString& path);
 QString writePdf(const QString& path, const QHash<QString, QString>& changes, QStringList* notStored);
 QString writeJpeg(const QString& path, const QHash<QString, QString>& changes, QStringList* notStored);
+
+/// Files at least this big may be edited in place where a format allows it
+/// safely (MP4/MOV with the moov at the end) instead of copied. 64 MB unless
+/// a test lowers it.
+qint64 inPlaceMinSize();
+void setInPlaceMinSize(qint64 bytes);
+
+/// Writes what's buffered for @p f through to the disk, so writes land in order.
+bool flushToDisk(QFile& f);
 
 /// Swaps @p temp in for @p target, keeping the target's creation date and
 /// permissions. Removes @p temp if it fails.

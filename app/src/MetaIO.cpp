@@ -10,6 +10,9 @@
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <io.h>
+
+#include <atomic>
 
 namespace meta {
 
@@ -144,7 +147,7 @@ ReadResult read(const QString& path)
     if (r.ok)   // FFmpeg for the facts; the tags read directly where this app writes them
         if (const auto tags = nativeTags(path)) r.tags = *tags;
     if (r.ok) r.info.append({"Size", QLocale().formattedDataSize(fi.size(), 1, QLocale::DataSizeTraditionalFormat)});
-    if (r.ok) r.credentials = c2pa::read(path);
+    if (r.ok) r.credentials = c2pa::read(path, false);   // the hash check is done when the file is shown
     return r;
 }
 
@@ -164,7 +167,7 @@ WriteResult write(const QString& path, const QHash<QString, QString>& changes, b
     if (dropCredentials) {   // first, so the tags are written to the file without them
         w.error = c2pa::remove(path);
         if (!w.error.isEmpty()) return w;
-        if (!c2pa::read(path).isEmpty()) {
+        if (!c2pa::read(path, false).isEmpty()) {
             w.error = "The Content Credentials are still there after removing them.";
             return w;
         }
@@ -221,6 +224,17 @@ static WriteResult writeFitting(const QString& path, const QHash<QString, QStrin
     w.notStored = refused;
     w.ok = true;
     return w;
+}
+
+static std::atomic<qint64> inPlaceMin{64ll << 20};
+qint64 inPlaceMinSize() { return inPlaceMin; }
+void setInPlaceMinSize(qint64 bytes) { inPlaceMin = bytes; }
+
+bool flushToDisk(QFile& f)
+{
+    if (!f.flush()) return false;
+    const HANDLE h = HANDLE(_get_osfhandle(f.handle()));
+    return h != INVALID_HANDLE_VALUE && FlushFileBuffers(h);
 }
 
 QString tempPathFor(const QString& path)

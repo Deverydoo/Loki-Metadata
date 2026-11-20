@@ -1,10 +1,12 @@
 #include "MetaEditor.h"
+#include "C2pa.h"
 
 #include <QCoreApplication>
 #include <QDir>
 #include <QDirIterator>
 #include <QElapsedTimer>
 #include <QFileInfo>
+#include <QMutexLocker>
 #include <QPointer>
 #include <QProcess>
 #include <QSet>
@@ -12,6 +14,7 @@
 #include <QThreadPool>
 
 #include <algorithm>
+#include <climits>
 
 using namespace meta;
 
@@ -177,15 +180,17 @@ void FieldListModel::rebuild()
     if (!sel.isEmpty()) {
         // Every field the selected files' formats hold (empty or not), any
         // other field one of them has, and any custom one just added.
-        QStringList keys;
+        QSet<QString> keySet;
         for (int i : sel) {
-            for (const QString& k : fieldsFor(editor_->list_[i].path))
-                if (!keys.contains(k)) keys.append(k);
-            for (const QString& k : editor_->list_[i].keys())
-                if (!keys.contains(k)) keys.append(k);
+            const MetaFile& f = editor_->list_[i];
+            for (const QString& k : fieldsFor(f.path)) keySet.insert(k);
+            for (const auto& [k, v] : f.tags)
+                if (f.value(k).has_value()) keySet.insert(k);
+            for (auto it = f.pending.begin(); it != f.pending.end(); ++it)
+                if (it.value().has_value()) keySet.insert(it.key());
         }
-        for (const QString& k : editor_->extraKeys_)
-            if (!keys.contains(k)) keys.append(k);
+        for (const QString& k : editor_->extraKeys_) keySet.insert(k);
+        QStringList keys(keySet.begin(), keySet.end());
         sortKeys(keys);
         for (const QString& k : keys) rows_.append(compute(k));
     }
@@ -203,22 +208,28 @@ void FieldListModel::refresh(const QString& key)
 
 // --- MetaEditor --------------------------------------------------------------
 
-MetaEditor::MetaEditor(QObject* parent) : QObject(parent), files_(this), fields_(this), pool_(new QThreadPool(this))
+MetaEditor::MetaEditor(QObject* parent)
+    : QObject(parent), files_(this), fields_(this), pool_(new QThreadPool(this)), applyPool_(new QThreadPool(this))
 {
     pool_->setMaxThreadCount(std::max(2, QThread::idealThreadCount() / 2));
+    applyPool_->setMaxThreadCount(std::clamp(QThread::idealThreadCount() / 4, 1, 4));
 }
 
 MetaEditor::~MetaEditor()
 {
     pool_->clear();
+    applyPool_->clear();
     pool_->waitForDone();
+    applyPool_->waitForDone();
 }
 
-int MetaEditor::indexOf(const QString& path) const
+int MetaEditor::indexOf(const QString& path) const { return rowOf_.value(path.toLower(), -1); }
+
+void MetaEditor::rebuildIndex()
 {
-    for (int i = 0; i < list_.size(); ++i)
-        if (list_[i].path.compare(path, Qt::CaseInsensitive) == 0) return i;
-    return -1;
+    rowOf_.clear();
+    rowOf_.reserve(list_.size());
+    for (int i = 0; i < list_.size(); ++i) rowOf_.insert(list_[i].path.toLower(), i);
 }
 
 QList<int> MetaEditor::selectedRows() const
@@ -244,10 +255,7 @@ int MetaEditor::modifiedCount() const
     return int(std::count_if(list_.begin(), list_.end(), [](const MetaFile& f) { return f.modified(); }));
 }
 
-int MetaEditor::loadingCount() const
-{
-    return int(std::count_if(list_.begin(), list_.end(), [](const MetaFile& f) { return f.state == MetaFile::Loading; }));
-}
+int MetaEditor::loadingCount() const { return loading_; }
 
 QVariantMap MetaEditor::current() const
 {
@@ -346,39 +354,49 @@ void MetaEditor::addPaths(const QStringList& paths)
             if (!includeSubfolders_ && found.size() == before)
                 deeper = deeper || QDirIterator(fi.absoluteFilePath(), filters, QDir::Files, QDirIterator::Subdirectories).hasNext();
         } else if (isSupported(p)) {
-            found.append(fi.absoluteFilePath());
+            found.append(QDir::fromNativeSeparators(fi.absoluteFilePath()));
         } else if (fi.exists()) {
             ++skipped;
         }
     }
     std::sort(found.begin(), found.end(), [](const QString& a, const QString& b) { return a.compare(b, Qt::CaseInsensitive) < 0; });
 
-    int added = 0;
-    for (const QString& p : found) {
-        if (indexOf(p) >= 0 || p.contains(".runa-tmp.")) continue;
+    // Remembered for the next dialog: the folder added, or the files' folder.
+    for (const QString& p : paths) {
         const QFileInfo fi(p);
+        if (fi.isDir()) setLastFolder(fi.absoluteFilePath());
+        else if (fi.isFile()) setLastFolder(fi.absolutePath());
+    }
+
+    QList<MetaFile> fresh;
+    QSet<QString> seen;
+    for (const QString& p : found) {
+        const QString key = p.toLower();
+        if (rowOf_.contains(key) || seen.contains(key) || p.contains(".runa-tmp.")) continue;
+        seen.insert(key);
         MetaFile f;
-        f.path = fi.absoluteFilePath();
-        f.name = fi.fileName();
-        f.folder = QDir::toNativeSeparators(fi.absolutePath());
+        f.path = p;
+        const qsizetype slash = p.lastIndexOf('/');
+        f.name = p.mid(slash + 1);
+        f.folder = QDir::toNativeSeparators(p.left(slash));
         f.badge = formatBadge(p);
         f.kind = kindOf(p);
-        const int row = int(list_.size());
-        files_.beginInsertRows({}, row, row);
-        list_.append(f);
-        files_.endInsertRows();
-        ++added;
-
-        QPointer<MetaEditor> self(this);
-        const QString path = f.path;
-        pool_->start([self, path] {
-            const ReadResult r = meta::read(path);
-            QMetaObject::invokeMethod(QCoreApplication::instance(), [self, path, r] {
-                if (self) self->loaded(path, r);
-            }, Qt::QueuedConnection);
-        });
+        fresh.append(std::move(f));
     }
-    if (added) emit countChanged();
+    const int added = int(fresh.size());
+    if (added) {
+        const int first = int(list_.size());
+        files_.beginInsertRows({}, first, first + added - 1);
+        list_.reserve(first + added);
+        for (MetaFile& f : fresh) {
+            rowOf_.insert(f.path.toLower(), int(list_.size()));
+            list_.append(std::move(f));
+        }
+        files_.endInsertRows();
+        loading_ += added;
+        for (int i = first; i < list_.size(); ++i) startRead(list_[i].path);
+        emit countChanged();
+    }
     if (added && list_.size() == added) {   // the first files: show the first one
         list_[0].selected = true;
         anchor_ = current_ = 0;
@@ -398,19 +416,94 @@ void MetaEditor::addPaths(const QStringList& paths)
         say(added == 1 ? QString("Added 1 file.") : QString("Added %1 files.").arg(added));
 }
 
-void MetaEditor::loaded(const QString& path, const ReadResult& r)
+void MetaEditor::setLastFolder(const QString& folder)
 {
-    const int i = indexOf(path);
-    if (i < 0) return;
-    MetaFile& f = list_[i];
-    f.state = r.ok ? MetaFile::Ready : MetaFile::Failed;
-    f.error = r.ok ? QString() : r.error;
-    f.tags = r.tags;
-    f.info = r.info;
-    f.credentials = r.credentials;
-    files_.rowChanged(i);
+    const QString f = QDir::fromNativeSeparators(folder);
+    if (f == lastFolder_) return;
+    lastFolder_ = f;
+    emit lastFolderChanged();
+}
+
+// Nothing (the dialog's own default) when the folder is gone.
+QUrl MetaEditor::lastFolderUrl() const
+{
+    return !lastFolder_.isEmpty() && QDir(lastFolder_).exists() ? QUrl::fromLocalFile(lastFolder_) : QUrl();
+}
+
+QUrl MetaEditor::lastFolderParentUrl() const
+{
+    if (lastFolderUrl().isEmpty()) return {};
+    QDir up(lastFolder_);
+    return up.cdUp() ? QUrl::fromLocalFile(up.absolutePath()) : QUrl::fromLocalFile(lastFolder_);
+}
+
+void MetaEditor::startRead(const QString& path)
+{
+    // Workers can't outlive the editor (its destructor waits for them).
+    pool_->start([this, path] {
+        ReadResult r = meta::read(path);
+        QMutexLocker lock(&readsMutex_);
+        reads_.append({path, std::move(r)});
+        if (!takeQueued_) {
+            takeQueued_ = true;
+            QMetaObject::invokeMethod(this, &MetaEditor::takeReads, Qt::QueuedConnection);
+        }
+    });
+}
+
+void MetaEditor::takeReads()
+{
+    QList<QPair<QString, ReadResult>> batch;
+    {
+        QMutexLocker lock(&readsMutex_);
+        batch.swap(reads_);
+        takeQueued_ = false;
+    }
+    int lo = INT_MAX, hi = -1;
+    bool shown = false;
+    for (auto& [path, r] : batch) {
+        const int i = indexOf(path);
+        if (i < 0) continue;   // removed meanwhile
+        MetaFile& f = list_[i];
+        if (f.state == MetaFile::Saving) continue;
+        if (f.state == MetaFile::Loading) --loading_;
+        f.state = r.ok ? MetaFile::Ready : MetaFile::Failed;
+        f.error = r.ok ? QString() : r.error;
+        f.tags = std::move(r.tags);
+        f.info = std::move(r.info);
+        f.credentials = std::move(r.credentials);
+        lo = std::min(lo, i);
+        hi = std::max(hi, i);
+        shown = shown || f.selected;
+    }
+    if (hi < 0) return;
+    emit files_.dataChanged(files_.index(lo), files_.index(hi));
     emit countChanged();   // loadingCount
-    if (f.selected) selectionDidChange();
+    if (shown) selectionDidChange();
+}
+
+// The record's data hash means reading the whole file, so it is checked for
+// the one file on show, in the background, ahead of any reads still queued.
+void MetaEditor::checkShownCredentials()
+{
+    const QList<int> sel = selectedRows();
+    if (sel.size() != 1) return;
+    const MetaFile& f = list_[sel.first()];
+    if (f.state != MetaFile::Ready || !f.hasCredentials() || !f.credentials.value("hashable").toBool()
+        || !f.credentials.value("match").toString().isEmpty() || checking_.contains(f.path))
+        return;
+    checking_.insert(f.path);
+    const QString path = f.path;
+    pool_->start([this, path] {
+        const QVariantMap checked = c2pa::read(path, true);
+        QMetaObject::invokeMethod(this, [this, path, checked] {
+            checking_.remove(path);
+            const int i = indexOf(path);
+            if (i < 0 || list_[i].state != MetaFile::Ready || !list_[i].hasCredentials()) return;
+            list_[i].credentials = checked;
+            if (list_[i].selected) emit currentChanged();
+        }, Qt::QueuedConnection);
+    }, 1);
 }
 
 bool MetaEditor::waitForLoads(int ms)
@@ -431,6 +524,7 @@ void MetaEditor::selectionDidChange()
     fields_.rebuild();
     emit selectionChanged();
     emit currentChanged();
+    checkShownCredentials();
 }
 
 void MetaEditor::click(int row, int modifiers)
@@ -492,11 +586,19 @@ void MetaEditor::removeSelected()
     if (busy_) return;
     const QList<int> sel = selectedRows();
     if (sel.isEmpty()) return;
-    for (int k = int(sel.size()) - 1; k >= 0; --k) {
-        files_.beginRemoveRows({}, sel[k], sel[k]);
-        list_.removeAt(sel[k]);
+    // Back to front, a run of neighbours at a time (Select all, Delete: one).
+    for (int k = int(sel.size()) - 1; k >= 0;) {
+        int start = k;
+        while (start > 0 && sel[start - 1] == sel[start] - 1) --start;
+        const int from = sel[start], to = sel[k];
+        for (int i = from; i <= to; ++i)
+            if (list_[i].state == MetaFile::Loading) --loading_;
+        files_.beginRemoveRows({}, from, to);
+        list_.remove(from, to - from + 1);
         files_.endRemoveRows();
+        k = start - 1;
     }
+    rebuildIndex();
     anchor_ = current_ = -1;
     if (!list_.isEmpty()) {   // select the file that took the first one's place
         const int next = std::min(sel.first(), int(list_.size()) - 1);
@@ -647,18 +749,16 @@ void MetaEditor::apply()
     emit progressChanged();
     say(applyTotal_ == 1 ? QString("Saving 1 file...") : QString("Saving %1 files...").arg(applyTotal_));
 
-    // One file at a time: videos are big, and a disk does one write best.
+    // A few files at a time: most of a save is small reads and writes, which
+    // an SSD does side by side. (Big videos are edited in place, see Mp4Meta.)
     QPointer<MetaEditor> self(this);
-    QThread* worker = QThread::create([self, jobs] {
-        for (const Job& j : jobs) {
+    for (const Job& j : jobs)
+        applyPool_->start([self, j] {
             const WriteResult w = meta::write(j.path, j.changes, j.dropCredentials);
             QMetaObject::invokeMethod(QCoreApplication::instance(), [self, path = j.path, w] {
                 if (self) self->saved(path, w);
             }, Qt::QueuedConnection);
-        }
-    });
-    connect(worker, &QThread::finished, worker, &QObject::deleteLater);
-    worker->start();
+        });
 }
 
 void MetaEditor::saved(const QString& path, const WriteResult& w)

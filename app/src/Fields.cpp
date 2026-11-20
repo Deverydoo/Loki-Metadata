@@ -1,6 +1,9 @@
 #include "Fields.h"
 
 #include <QFileInfo>
+#include <QHash>
+
+#include <algorithm>
 #include <QRegularExpression>
 #include <QSet>
 
@@ -85,9 +88,16 @@ bool isTechnicalTag(const QString& key)
     return technical.contains(key.toLower());
 }
 
-QStringList fieldsFor(const QString& path)
+// A path's extension, lower case (QFileInfo would look at the disk).
+static QString extOf(const QString& path)
 {
-    const QString ext = QFileInfo(path).suffix().toLower();
+    const qsizetype dot = path.lastIndexOf('.');
+    const qsizetype slash = std::max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
+    return dot > slash ? path.mid(dot + 1).toLower() : QString();
+}
+
+static QStringList fieldsForExt(const QString& ext)
+{
     // Tagged the way music players expect: the full set of music fields.
     static const QStringList music{"title", "subtitle", "artist", "album_artist", "album", "composer", "lyricist",
                                    "conductor", "remixer", "genre", "date", "track", "disc", "grouping", "bpm", "key",
@@ -123,11 +133,33 @@ QStringList fieldsFor(const QString& path)
             "grouping", "bpm", "mood", "isrc"};
 }
 
+// Asked for every selected file and every field, so both are remembered per
+// extension (per thread: files are read and written on several).
+QStringList fieldsFor(const QString& path)
+{
+    thread_local QHash<QString, QStringList> cache;
+    const QString ext = extOf(path);
+    auto it = cache.constFind(ext);
+    if (it == cache.constEnd()) it = cache.insert(ext, fieldsForExt(ext));
+    return it.value();
+}
+
+static bool canHoldExt(const QString& ext, const QString& key);
+
 bool canHold(const QString& path, const QString& key)
 {
-    if (fieldsFor(path).contains(key)) return true;
+    thread_local QHash<QString, bool> cache;
+    const QString ext = extOf(path);
+    const QString k = ext + '|' + key;
+    auto it = cache.constFind(k);
+    if (it == cache.constEnd()) it = cache.insert(k, canHoldExt(ext, key));
+    return it.value();
+}
+
+static bool canHoldExt(const QString& ext, const QString& key)
+{
+    if (fieldsForExt(ext).contains(key)) return true;
     if (find(key)) return false;   // a named field this format has no place for
-    const QString ext = QFileInfo(path).suffix().toLower();
     if (ext == "wav" || ext == "avi") {   // INFO list: only its four-letter IDs
         static const QRegularExpression infoId("^I[A-Z0-9]{3}$");
         return infoId.match(key).hasMatch();

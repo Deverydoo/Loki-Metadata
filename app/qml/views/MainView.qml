@@ -89,11 +89,14 @@ Item {
             "Images (*.png *.jpg *.jpeg *.webp)",
             "Documents (*.docx *.xlsx *.pptx *.odt *.ods *.odp *.pdf)"
         ]
+        currentFolder: editor.lastFolderUrl   // where files were last added from
         onAccepted: editor.addUrls(selectedFiles)
     }
     FolderDialog {
         id: folderDialog
         title: "Add a folder"
+        currentFolder: editor.lastFolderParentUrl   // beside the folder last added...
+        selectedFolder: editor.lastFolderUrl       // ...with it picked
         onAccepted: editor.addUrls([selectedFolder])
     }
 
