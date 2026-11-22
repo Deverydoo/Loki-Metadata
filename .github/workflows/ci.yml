@@ -1,0 +1,103 @@
+# Builds Loki Metadata and runs its tests on every push and pull request to main.
+#
+# The same build as the README describes: Qt 6.12.0 (msvc2022_64), and from
+# vcpkg qpdf, zlib, libjpeg-turbo and a static LGPL FFmpeg 9.0.2. vcpkg is
+# pinned to the commit the release was built with; its packages and Qt are
+# cached between runs.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  QT_VERSION: "6.12.0"
+  # aqtinstall learned Qt 6.12's repository layout after its last release
+  # (3.3.0), so it comes from this commit until a release has it.
+  AQT_SOURCE: "git+https://github.com/miurahr/aqtinstall.git@4c759852b1108cc801d8e24979136b895b5155d4"
+  VCPKG_COMMIT: "65a2c2391af39b773f83f91e0ab6c8ced8f9c727"
+  # Release-only build of x64-windows-static-md: the same libraries, half the build time.
+  VCPKG_TRIPLET: "x64-windows-static-md-release"
+  VCPKG_PACKAGES: "qpdf ffmpeg[core,avcodec,avformat]"
+
+jobs:
+  build:
+    name: Build and test (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 120
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: windows
+          target: desktop
+          arch: win64_msvc2022_64
+          aqtsource: ${{ env.AQT_SOURCE }}
+          cache: true
+
+      - name: Set up vcpkg
+        shell: pwsh
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP "vcpkg"
+          git init -q $root
+          git -C $root fetch -q --depth 1 https://github.com/microsoft/vcpkg.git $env:VCPKG_COMMIT
+          git -C $root checkout -q FETCH_HEAD
+          & "$root\bootstrap-vcpkg.bat" -disableMetrics
+          $cache = Join-Path $env:RUNNER_TEMP "vcpkg-binary-cache"
+          New-Item -ItemType Directory -Force $cache | Out-Null
+          "VCPKG_ROOT=$root" >> $env:GITHUB_ENV
+          "VCPKG_BINARY_SOURCES=clear;files,$cache,readwrite" >> $env:GITHUB_ENV
+          "VCPKG_BINARY_CACHE=$cache" >> $env:GITHUB_ENV
+
+      - name: Restore vcpkg packages
+        id: vcpkg-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ runner.temp }}/vcpkg-binary-cache
+          key: vcpkg-${{ env.VCPKG_COMMIT }}-${{ env.VCPKG_TRIPLET }}-${{ env.VCPKG_PACKAGES }}
+          restore-keys: |
+            vcpkg-${{ env.VCPKG_COMMIT }}-${{ env.VCPKG_TRIPLET }}-
+
+      - name: Install vcpkg packages
+        shell: pwsh
+        run: |
+          & "$env:VCPKG_ROOT\vcpkg.exe" install --triplet $env:VCPKG_TRIPLET $env:VCPKG_PACKAGES.Split(" ")
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Save vcpkg packages
+        if: steps.vcpkg-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ runner.temp }}/vcpkg-binary-cache
+          key: vcpkg-${{ env.VCPKG_COMMIT }}-${{ env.VCPKG_TRIPLET }}-${{ env.VCPKG_PACKAGES }}
+
+      - name: Configure
+        shell: pwsh
+        run: |
+          $prefix = "$env:VCPKG_ROOT/installed/$env:VCPKG_TRIPLET" -replace '\\', '/'
+          cmake -B build -A x64 `
+                "-DCMAKE_PREFIX_PATH=$env:QT_ROOT_DIR" `
+                "-DFFMPEG_ROOT=$prefix" `
+                "-DVCPKG_STATIC_MD=$prefix"
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Test
+        working-directory: build
+        run: ctest -C Release --output-on-failure
