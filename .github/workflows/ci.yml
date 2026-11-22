@@ -63,13 +63,16 @@ jobs:
           "VCPKG_ROOT=$root" >> $env:GITHUB_ENV
           "VCPKG_BINARY_SOURCES=clear;files,$cache,readwrite" >> $env:GITHUB_ENV
           "VCPKG_BINARY_CACHE=$cache" >> $env:GITHUB_ENV
+          # Cache keys cannot hold commas, so the package list goes in as a hash.
+          $hash = (Get-FileHash -InputStream ([IO.MemoryStream]::new([Text.Encoding]::UTF8.GetBytes($env:VCPKG_PACKAGES)))).Hash.Substring(0, 16)
+          "VCPKG_CACHE_KEY=vcpkg-$env:VCPKG_COMMIT-$env:VCPKG_TRIPLET-$hash" >> $env:GITHUB_ENV
 
       - name: Restore vcpkg packages
         id: vcpkg-cache
         uses: actions/cache/restore@v6
         with:
           path: ${{ runner.temp }}/vcpkg-binary-cache
-          key: vcpkg-${{ env.VCPKG_COMMIT }}-${{ env.VCPKG_TRIPLET }}-${{ env.VCPKG_PACKAGES }}
+          key: ${{ env.VCPKG_CACHE_KEY }}
           restore-keys: |
             vcpkg-${{ env.VCPKG_COMMIT }}-${{ env.VCPKG_TRIPLET }}-
 
@@ -84,7 +87,7 @@ jobs:
         uses: actions/cache/save@v6
         with:
           path: ${{ runner.temp }}/vcpkg-binary-cache
-          key: vcpkg-${{ env.VCPKG_COMMIT }}-${{ env.VCPKG_TRIPLET }}-${{ env.VCPKG_PACKAGES }}
+          key: ${{ env.VCPKG_CACHE_KEY }}
 
       - name: Configure
         shell: pwsh
