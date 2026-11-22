@@ -2,6 +2,8 @@
 
 # Loki Metadata
 
+[![CI](https://github.com/Deverydoo/Loki-Metadata/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Deverydoo/Loki-Metadata/actions/workflows/ci.yml)
+
 Edit the tags and properties of music, video, pictures, documents and FBX
 3D models, one file at a time or many at once. For Windows 10 and 11 (64-bit).
 
